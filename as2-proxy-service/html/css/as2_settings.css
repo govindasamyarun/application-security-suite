@@ -1,0 +1,25 @@
+td.update-control {
+  background: url("../logo/pencil_16.png") no-repeat center center;
+  cursor: pointer;
+}
+tr.shown td.update-control {
+  background: url("../logo/pencil_16.png") no-repeat center center;
+}
+
+td.delete-control {
+  background: url("../logo/trash_16.png") no-repeat center center;
+  cursor: pointer;
+}
+tr.shown td.delete-control {
+  background: url("../logo/trash_16.png") no-repeat center center;
+}
+
+.well-block {
+  background-color: #fff;
+  border: 1px solid #e9e6e8;
+  padding: 40px;
+}
+
+.well-title {
+  margin-bottom: 40px;
+}

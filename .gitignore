@@ -1,0 +1,11 @@
+*.ini
+*.pdf
+*.doc
+*.log
+*.csv
+!scanner_results.csv
+*.txt
+!requirements.txt
+backup
+data-volume
+*info
