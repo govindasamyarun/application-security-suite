@@ -1,0 +1,134 @@
+.GaugeMeter {
+  position: Relative;
+  text-align: Center;
+  overflow: Hidden;
+  cursor: Default;
+}
+
+.GaugeMeter SPAN,
+.GaugeMeter B {
+  margin: 0 23%;
+  width: 54%;
+  position: Absolute;
+  text-align: Center;
+  display: Inline-Block;
+  color: RGBa(0, 0, 0, 0.8);
+  font-weight: 100;
+  font-family: "Open Sans", Arial;
+  overflow: Hidden;
+  white-space: NoWrap;
+  text-overflow: Ellipsis;
+}
+.GaugeMeter[data-style="Semi"] B {
+  margin: 0 10%;
+  width: 80%;
+}
+
+.GaugeMeter S,
+.GaugeMeter U {
+  text-decoration: None;
+  font-size: 0.3em;
+  font-weight: 200;
+  opacity: 0.6;
+}
+
+.GaugeMeter B {
+  color: Black;
+  font-weight: 200;
+  font-size: 0.85em;
+  opacity: 0.8;
+}
+
+BODY {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+}
+
+#Header {
+  min-height: 360px;
+}
+
+HEADER,
+FOOTER {
+  width: 100%;
+  z-index: 1;
+  top: 0;
+  margin: 0;
+  padding: 10px 0 0 0;
+  text-align: Center;
+  background: #21b4f9;
+  background: #2c94e0;
+  background: Linear-Gradient(45deg, #2c94e0, #21b4f9),
+    URL(
+      data:image/png;base64,
+      iVBORw0KGgoAAAANSUhEUgAAACcAAAAnCAQAAAAmqpm + AAAAUUlEQVR4AWMgDvyXJEoV7/AwjnckGzdq3Khxo8apDQvj/kuCIS9OqIYCefFD4tzG + F + NGFW0Mo7ysBvNFaPGjRo3apzkIDfuP89/XipASQgEAF4fpQGYXVnnAAAAAElFTkSuQmCC
+    );
+  background-blend-mode: Lighten;
+  box-shadow: 0 0 20px 0 rgba(0, 0, 0, 0.4);
+  -moz-animation: BluePrint 60s Infinite;
+  -webkit-animation: BluePrint 60s Infinite;
+  animation: BluePrint 60s Infinite;
+}
+
+@-moz-keyframes BluePrint {
+  0% {
+    background-position: 0 0;
+  }
+  100% {
+    background-position: 1100% 100%;
+  }
+}
+
+@-webkit-keyframes BluePrint {
+  0% {
+    background-position: 0 0;
+  }
+  100% {
+    background-position: 1100% 100%;
+  }
+}
+
+@keyframes BluePrint {
+  0% {
+    background-position: 0 0;
+  }
+  100% {
+    background-position: -100% 100%;
+  }
+}
+
+HEADER H1 {
+  color: White;
+  font: Normal 400 28px/28px "Helvetica", Arial;
+  margin: 30px Auto 20px Auto;
+  text-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
+}
+
+HEADER P {
+  color: White;
+  font: Normal 200 18px/22px "Helvetica", Arial;
+  margin: 0 Auto;
+  text-shadow: 0 1px 5px rgba(0, 0, 0, 0.3);
+}
+HEADER P.SubTitle {
+  color: White;
+  font: Normal 200 15px/22px "Helvetica", Arial;
+  margin: 0 Auto;
+  text-shadow: 0 1px 5px rgba(0, 0, 0, 0.3);
+}
+
+HEADER .Preview {
+  overflow: Auto;
+  margin-top: 30px;
+  display: Inline-Block;
+}
+
+HEADER .Preview .GaugeMeter {
+  margin: 0 10px;
+}
+
+#GaugeMeter_10 {
+  width: 50%;
+  margin: 0 auto;
+}

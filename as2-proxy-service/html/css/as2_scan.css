@@ -1,0 +1,30 @@
+.hidden {
+  display: none;
+}
+
+.well-block {
+  background-color: #fff;
+  border: 1px solid #e9e6e8;
+  padding: 40px;
+  padding-top: 150px;
+}
+
+.well-title {
+  margin-bottom: 40px;
+}
+
+#scancss {
+  padding-top: 50px;
+}
+
+#well-block-table {
+  background-color: #fff;
+  border: 1px solid #e9e6e8;
+  padding: 40px;
+  padding-top: 150px;
+  clear: left;
+}
+
+#well-title-table {
+  margin-bottom: 40px;
+}

@@ -1,0 +1,9 @@
+Flask
+waitress
+requests
+configparser
+schedule
+psycopg2
+Flask-SQLAlchemy
+Flask-Migrate
+redis

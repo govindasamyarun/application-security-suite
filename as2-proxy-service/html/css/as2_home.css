@@ -1,0 +1,15 @@
+td.update-control {
+  background: url("../logo/pencil_16.png") no-repeat center center;
+  cursor: pointer;
+}
+tr.shown td.update-control {
+  background: url("../logo/pencil_16.png") no-repeat center center;
+}
+
+td.delete-control {
+  background: url("../logo/trash_16.png") no-repeat center center;
+  cursor: pointer;
+}
+tr.shown td.delete-control {
+  background: url("../logo/trash_16.png") no-repeat center center;
+}
