@@ -49,7 +49,7 @@ AS{2} leverages Gitleaks, an open-source tool, to identify hard-coded secrets fr
 
    ```sh
    cd /Data
-   git clone https://github.com/govindasamyarun/testrepo
+   git clone https://github.com/govindasamyarun/application-security-suite.git
    ```
    
 2. Suppose you wish to use a different username, password, and database. Edit docker-compose.yml to update the following values. If not, skip step 2. 
