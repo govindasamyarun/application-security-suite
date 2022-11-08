@@ -69,6 +69,8 @@ class as2Class:
         self.start = self.limit + "&start="
         self.bitbucket_headers = {"Authorization": "Bearer " + self.bitbucket_auth_token}
         self.slack_headers = {"Content-Type": "application/x-www-form-urlencoded", "Authorization": "Bearer " + self.slack_auth_token}
+        # Commit details
+        self.latest_commit_details = {}
 
     def dt(self):
         # This function returns current date and time 
@@ -120,6 +122,19 @@ class as2Class:
             print('ERROR - get_repos - Failed to execute get_repos function - {}'.format(e))
         #print('DEBUG - get_repos - isLastPage={}, nextPageStart={}'.format(repos_output["isLastPage"], self.nextPageStart))
         return self.isLastPage, self.nextPageStart, repos_output["values"]
+
+    def get_latest_commit_details(self, project, repo):
+        # This function captures latest commit details 
+        print('INFO - as2Class - Execute get_latest_commit_details function')
+        try:
+            commit_url = 'projects/{}/repos/{}/commits?limit=1'.format(project, repo)
+            commit_output = requests.get(self.bitbucket_base_url + commit_url, headers = self.bitbucket_headers)
+            commit_output = commit_output.json()
+            committer_timestamp = datetime.fromtimestamp(commit_output['values'][0]['committerTimestamp'] / 1000)
+            committer_timestamp = datetime.strftime(committer_timestamp, '%d-%b-%Y %H:%M:%S')
+            self.latest_commit_details[self.formatKeys(project+'-'+repo)] = {'committer_name': commit_output['values'][0]['committer']['name'], 'committer_email': commit_output['values'][0]['committer']['emailAddress'], 'committer_message': commit_output['values'][0]['message'], 'committer_timestamp': committer_timestamp}
+        except Exception as e:
+            print('ERROR - get_latest_commit_details - Error: {}'.format(e))
 
     def get_branches(self, queryString, project, repository):
         # This function returns branch details  
@@ -265,15 +280,16 @@ class as2Class:
 
         # Write the scan results 
         with open(self.scanner_results_directory+'scanner_results.csv', 'a') as f:
-            w = csv.writer(f)        
+            w = csv.writer(f)
+            committer_key = self.formatKeys(project+'-'+repository)      
             if int(scanner_results["length"]) != 0:
                 self.no_of_secrets["repository"][repository] = scanner_results["length"]
                 for j in range(len(scanner_results["values"])):
-                    scanner_results_dict = {"eventtime": datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3], "project": project, "repository": repository, "slug": slug, "ssh": ssh, "branch": branch, "noOfSecrets": scanner_results["length"], "StartLine": scanner_results["values"][j]["StartLine"], "EndLine": scanner_results["values"][j]["EndLine"], "StartColumn": scanner_results["values"][j]["StartColumn"], "EndColumn": scanner_results["values"][j]["EndColumn"], "File": scanner_results["values"][j]["File"], "Author": scanner_results["values"][j]["Author"], "Email": scanner_results["values"][j]["Email"], "Date": scanner_results["values"][j]["Date"], "Message": scanner_results["values"][j]["Message"][:25]}
+                    scanner_results_dict = {"eventtime": datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3], "project": project, "repository": repository, "slug": slug, "ssh": ssh, "branch": branch, "noOfSecrets": scanner_results["length"], "StartLine": scanner_results["values"][j]["StartLine"], "EndLine": scanner_results["values"][j]["EndLine"], "StartColumn": scanner_results["values"][j]["StartColumn"], "EndColumn": scanner_results["values"][j]["EndColumn"], "File": scanner_results["values"][j]["File"], "Author": scanner_results["values"][j]["Author"], "Email": scanner_results["values"][j]["Email"], "Date": scanner_results["values"][j]["Date"], "Message": scanner_results["values"][j]["Message"][:25], "Committer Timestamp": self.latest_commit_details[committer_key]['committer_timestamp'], "Committer Name": self.latest_commit_details[committer_key]['committer_name'], "Committer email": self.latest_commit_details[committer_key]['committer_email'], "Committer Message": self.latest_commit_details[committer_key]['committer_message']}
                     w.writerow(scanner_results_dict.values())
                     #print("DEBUG - date={}, project={}, repository={}, slug={}, ssh={}, branch={}, noOfSecrets={}, StartLine={}, EndLine={}, StartColumn={}, EndColumn={}, File={}, Author={}, Email={}, Date={}, Message={}".format(datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3], project, repository, slug, ssh, branch, scan_results["length"], scan_results["values"][j]["StartLine"], scan_results["values"][j]["EndLine"], scan_results["values"][j]["StartColumn"], scan_results["values"][j]["EndColumn"], scan_results["values"][j]["File"], scan_results["values"][j]["Author"], scan_results["values"][j]["Email"], scan_results["values"][j]["Date"], scan_results["values"][j]["Message"][:25]))            
             else:
-                scanner_results_dict = {"eventtime": datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3], "project": project, "repository": repository, "slug": slug, "ssh": ssh, "branch": branch, "noOfSecrets": "0", "StartLine": "", "EndLine": "", "StartColumn": "", "EndColumn": "", "Match": "", "File": "", "Author": "", "Email": "", "Date": "", "Message": ""}
+                scanner_results_dict = {"eventtime": datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3], "project": project, "repository": repository, "slug": slug, "ssh": ssh, "branch": branch, "noOfSecrets": "0", "StartLine": "", "EndLine": "", "StartColumn": "", "EndColumn": "", "File": "", "Author": "", "Email": "", "Date": "", "Message": "", "Committer Timestamp": self.latest_commit_details[committer_key]['committer_timestamp'], "Committer Name": self.latest_commit_details[committer_key]['committer_name'], "Committer email": self.latest_commit_details[committer_key]['committer_email'], "Committer Message": self.latest_commit_details[committer_key]['committer_message']}
                 w.writerow(scanner_results_dict.values())
 
         # Update number of secrets 
@@ -353,6 +369,8 @@ class as2Class:
                     jobs = work.get(True, 5)
                     print('INFO - scan_master_branch - Added to Queue : {}'.format(self.formatKeys(jobs["project"]["name"]+'-'+jobs['name']+'-'+branch)))
                     self.queueCheck[self.formatKeys(jobs["project"]["name"]+'-'+jobs['name']+'-'+branch)] = True
+                    # Get last commit details 
+                    self.get_latest_commit_details(jobs["project"]["name"], jobs["name"])
                     
                     try:
                         for j in range(len(jobs["links"]["clone"])):
@@ -402,6 +420,8 @@ class as2Class:
                 while not self.end_process:
                     print('INFO - scan_all_branches - QueueSize: {}, ThreadCount: {}'.format(work.qsize(), threading.active_count()))
                     jobs = work.get(True, 5)
+                    # Get last commit details 
+                    self.get_latest_commit_details(jobs["project"]["name"], jobs["name"])
 
                     try:
                         for j in range(len(jobs["links"]["clone"])):
@@ -486,7 +506,7 @@ class as2Class:
             # Write column names 
             with open(self.scanner_results_directory+'scanner_results.csv', 'w+') as f:
                 w = csv.writer(f)
-                scan_results_dict = {"eventtime": "", "project": "", "repository": "", "slug": "", "ssh": "", "branch": "", "noOfSecrets": "", "StartLine": "", "EndLine": "", "StartColumn": "", "EndColumn": "", "File": "", "Author": "", "Email": "", "Date": "", "Message": ""}
+                scan_results_dict = {"eventtime": "", "project": "", "repository": "", "slug": "", "ssh": "", "branch": "", "noOfSecrets": "", "StartLine": "", "EndLine": "", "StartColumn": "", "EndColumn": "", "File": "", "Author": "", "Email": "", "Date": "", "Message": "", "Committer Timestamp": "", "Committer Name": "", "Committer email": "", "Committer Message": ""}
                 w.writerow(scan_results_dict.keys())
 
             scanStartDate = self.dt()
