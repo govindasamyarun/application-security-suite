@@ -15,6 +15,8 @@ from random import randint, randrange
 from models.gitLeaksModel import gitLeaksDbHandler, gitLeaksEventsTable, gitLeaksSettingsTable
 from sqlalchemy import select, update, text
 from flask import current_app
+from libs.downloadRepository import downloadRepositoryClass
+from libs.gitleaks import gitleaksClass
 
 import threading, glob
 import queue
@@ -298,60 +300,18 @@ class as2Class:
         # To identify the repositories that are not downloaded or scanned 
         del[self.queueCheck[self.formatKeys(project+'-'+repository+'-'+branch)]]
         print('INFO - process_scanner_output - Remove from queueCheck : {}'.format(self.formatKeys(project+'-'+repository+'-'+branch)))
+        return {}
 
     def scanner(self, ssh, repository, repo_directory, branch, project):
         # This function is to download the repository and performs Gitleaks scan 
         print('INFO - as2Class - Execute scanner function')
-        os.chdir(self.scanner_directory)
-        downloadRepo = True
-        scanRepo = False
-        bitbucket_user_name = self.bitbucket_user_name.replace('@', '%40')
-        ssh_url = re.findall(r'(https\:\/\/)(.*)', ssh)
-        git_url = ssh_url[0][0] + bitbucket_user_name + ':' + self.bitbucket_auth_token + '@' + ssh_url[0][1]
 
-        while downloadRepo:
-            # The temp directory creation is to handle the repositories with the same name 
-            temp_dir = str(randrange(100000, 999999))+'_'+repo_directory+'/'
-            git_clone = Popen(['git', 'clone', '--single-branch', '--branch', branch, git_url, temp_dir], stdout=PIPE, stderr=PIPE)
-            git_clone_stdout, git_clone_stderr = git_clone.communicate()
-            # Temp directory gets created if the path exists -> set the scanRepo to true to move on 
-            # If not, failed to download the repository -> set the scanRepo to false
-            # queueCheck keeps track of the failed jobs 
-            if os.path.exists(self.scanner_directory+temp_dir):
-                downloadRepo = False
-                scanRepo = True
-                dirContent = glob.glob(self.scanner_directory+temp_dir+'/*')
-                #print("DEBUG - scanner - repository: {}, branch: {}, output: {}, console_output: {}, downloadRepo: {}, scanRepo: {}, dirFileCount: {}".format(repository, branch, str(git_clone_stdout), str(git_clone_stderr), downloadRepo, scanRepo, len(dirContent)))
-            elif 'Could not find remote branch' in git_clone_stderr.decode('utf-8'):
-                print("INFO - scanner - repository: {}, branch: {}, output: {}, console_output: {}, message: Repo or branch not found".format(repository, branch, str(git_clone_stdout), str(git_clone_stderr)))
-                downloadRepo = False
-                scanRepo = False
-            else:
-                downloadRepo = True
-                scanRepo = False
-                dirContent = []
+        download = downloadRepositoryClass(self.bitbucket_user_name, self.bitbucket_auth_token, ssh, repo_directory, repository, branch, self.scanner_directory).download()
 
-        if scanRepo and len(dirContent) > 0:
-            scanner = Popen([self.gitleaks_path, 'detect', '--source', temp_dir, '-v', '--log-opts='+branch], stdout=PIPE, stderr=PIPE)
-            scanner_stdout, scanner_stderr = scanner.communicate()
-            scanner_stdout = scanner_stdout.decode('UTF-8')
-            scanner_stdout = scanner_stdout.replace('\n', '')
-            scanner_stdout = scanner_stdout.replace('\t', '')
-            scanner_parsed_data = re.findall(r'(.*?)\"\}', scanner_stdout)
-            scanner_output = []
-            # Removes the temp directory and its contents 
-            shutil.rmtree(self.scanner_directory+temp_dir, ignore_errors=True)
-            if len(scanner_parsed_data) != 0:
-                for j in range(len(scanner_parsed_data)):
-                    try:
-                        scanner_output.append(json.loads(scanner_parsed_data[j] + '"}'))
-                    except:
-                        continue
-
-            #print('DEBUG - {} {} {} {}'.format(repository, branch, git_clone_stdout, scan_parsed_data))
-            # Execute process_scanner_output function 
-            scanner_results = {"length": len(scanner_parsed_data), "branch": branch, "values": scanner_output}
-            self.process_scanner_output(project, repository, repo_directory, ssh, branch, scanner_results)
+        #if scanRepo and len(dirContent) > 0:
+        if download['downloadRepoComplete'] and download['no_of_directories']:
+            gl_scan_results = gitleaksClass(self.gitleaks_path, self.scanner_directory, branch, download['temp_dir']).scan()
+            self.process_scanner_output(project, repository, repo_directory, ssh, branch, gl_scan_results)
         else:
             print('ERROR - scanner - Failed to download repository {}'.format(repository))
             return {'data': 'error'}
@@ -375,11 +335,18 @@ class as2Class:
                     try:
                         for j in range(len(jobs["links"]["clone"])):
                             if jobs["links"]["clone"][j]["name"] == "http":
-                                self.scanner(jobs["links"]["clone"][j]["href"], jobs["name"], jobs["slug"], "master", jobs["project"]["name"])
-                                self.no_of_repos_scanned.append(1)
-                                self.write_to_cache('CS_NoOfReposScanned', str(sum(self.no_of_repos_scanned)))
-                                self.write_to_cache('CS_NoOfSecretsFound', str(sum(self.secrets_count)))
-                                self.write_to_cache('CS_ReposNonCompliant', str(len(self.no_of_secrets["repository"].keys())))
+                                #self.scanner(jobs["links"]["clone"][j]["href"], jobs["name"], jobs["slug"], "master", jobs["project"]["name"])
+                                downloadResults = downloadRepositoryClass(self.bitbucket_user_name, self.bitbucket_auth_token, jobs["links"]["clone"][j]["href"], jobs["slug"], jobs["name"], branch, self.scanner_directory).download()
+                                if downloadResults['downloadRepoComplete'] and downloadResults['no_of_directories']:
+                                    gl_scan_results = gitleaksClass(self.gitleaks_path, self.scanner_directory, branch, downloadResults['temp_dir']).scan()
+                                    self.no_of_repos_scanned.append(1)
+                                    self.process_scanner_output(jobs["project"]["name"], jobs["name"], jobs["slug"], jobs["links"]["clone"][j]["href"], branch, gl_scan_results)
+                                    self.write_to_cache('CS_NoOfReposScanned', str(sum(self.no_of_repos_scanned)))
+                                    self.write_to_cache('CS_NoOfSecretsFound', str(sum(self.secrets_count)))
+                                    self.write_to_cache('CS_ReposNonCompliant', str(len(self.no_of_secrets["repository"].keys())))
+                                else:
+                                    print('ERROR - scanner - Failed to download repository {}'.format(jobs["name"]))
+                                    return {'data': 'error'}
                     except queue.Empty:
                         print('INFO - scan_master_branch - Empty queue')
 
@@ -429,23 +396,30 @@ class as2Class:
                                 # Get branch details for each repository 
                                 while(not self.branch_isLastPage):
                                     try:
-                                        self.branch_isLastPage, self.branch_nextPageStart, branch = self.get_branches(self.start + str(self.branch_nextPageStart), jobs["project"]["name"], jobs["name"])
-                                        branches = branches + branch
+                                        self.branch_isLastPage, self.branch_nextPageStart, branchOutput = self.get_branches(self.start + str(self.branch_nextPageStart), jobs["project"]["name"], jobs["name"])
+                                        branches = branches + branchOutput
                                     except KeyError as e:
                                         print('ERROR - scan_all_branches - isLastPage: {}, error: {}'.format(self.branch_isLastPage, e))
                                         self.branch_isLastPage = True
-                                for b in branches:
+                                for branch in branches:
                                     #print('DEBUG - scan_all_branches repository: {}, branch: {}'.format(jobs["name"], branch))
-                                    print('INFO - scan_all_branches - Add to Queue : {}'.format(self.formatKeys(jobs["project"]["name"]+'-'+jobs['name']+'-'+b)))
+                                    print('INFO - scan_all_branches - Add to Queue : {}'.format(self.formatKeys(jobs["project"]["name"]+'-'+jobs['name']+'-'+branch)))
                                     # Remove the special characters - ''.join(e for e in branch if e.isalnum())
-                                    self.queueCheck[self.formatKeys(jobs["project"]["name"]+'-'+jobs['name']+'-'+b)] = True
-                                    self.scanner(jobs["links"]["clone"][j]["href"], jobs["name"], jobs["slug"], b, jobs["project"]["name"])
+                                    self.queueCheck[self.formatKeys(jobs["project"]["name"]+'-'+jobs['name']+'-'+branch)] = True
+                                    #self.scanner(jobs["links"]["clone"][j]["href"], jobs["name"], jobs["slug"], b, jobs["project"]["name"])
+                                    downloadResults = downloadRepositoryClass(self.bitbucket_user_name, self.bitbucket_auth_token, jobs["links"]["clone"][j]["href"], jobs["slug"], jobs["name"], branch, self.scanner_directory).download()
+                                    if downloadResults['downloadRepoComplete'] and downloadResults['no_of_directories']:
+                                        gl_scan_results = gitleaksClass(self.gitleaks_path, self.scanner_directory, branch, downloadResults['temp_dir']).scan()
+                                        self.process_scanner_output(jobs["project"]["name"], jobs["name"], jobs["slug"], jobs["links"]["clone"][j]["href"], branch, gl_scan_results)
+                                        self.write_to_cache('CS_NoOfSecretsFound', str(sum(self.secrets_count)))
+                                        self.write_to_cache('CS_ReposNonCompliant', str(len(self.no_of_secrets["repository"].keys())))
+                                    else:
+                                        print('ERROR - scanner - Failed to download repository {}'.format(jobs["name"]))
+                                        return {'data': 'error'}
 
                         # Write CS status to cache 
                         self.no_of_repos_scanned.append(1)
                         self.write_to_cache('CS_NoOfReposScanned', str(sum(self.no_of_repos_scanned)))
-                        self.write_to_cache('CS_NoOfSecretsFound', str(sum(self.secrets_count)))
-                        self.write_to_cache('CS_ReposNonCompliant', str(len(self.no_of_secrets["repository"].keys())))
                     except queue.Empty:
                         print('INFO - scan_all_branches - Empty queue')
 
