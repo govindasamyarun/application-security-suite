@@ -5,9 +5,9 @@ from flask_migrate import Migrate
 import sqlalchemy
 from routes.apiRoute import apiRoute
 from routes.webRoute import webRoute
-from models.gitLeaksModel import gitLeaksDbHandler, gitLeaksSettingsTable
+from models.gitleaks import gitLeaksDbHandler, gitLeaksSettingsTable
 from sqlalchemy import event, inspect
-from libs.applicationSecuritySuite import as2LiteClass
+from libs.applicationSecuritySuite import AS2LITE
 
 app = Flask(__name__)
 
@@ -29,21 +29,21 @@ with app.app_context():
     # Sets the cache to default during application startup process 
     # CS - Current scan results
     # PS - Previous scan results
-    as2LiteClass().write_to_cache('CS_Status', 'Not Started')
-    as2LiteClass().write_to_cache('CS_TotalRepos', '0')
-    as2LiteClass().write_to_cache('CS_NoOfReposScanned', '0')
-    as2LiteClass().write_to_cache('CS_ReposNonCompliant', '0')
-    as2LiteClass().write_to_cache('CS_NoOfSecretsFound', '0')
-    as2LiteClass().write_to_cache('CS_PercentageCompletion', '0')
-    as2LiteClass().write_to_cache('CS_ScanStartDate', '-')
-    as2LiteClass().write_to_cache('CS_ScanEndDate', '-')
+    AS2LITE().write_to_cache('CS_Status', 'Not Started')
+    AS2LITE().write_to_cache('CS_TotalRepos', '0')
+    AS2LITE().write_to_cache('CS_NoOfReposScanned', '0')
+    AS2LITE().write_to_cache('CS_ReposNonCompliant', '0')
+    AS2LITE().write_to_cache('CS_NoOfSecretsFound', '0')
+    AS2LITE().write_to_cache('CS_PercentageCompletion', '0')
+    AS2LITE().write_to_cache('CS_ScanStartDate', '-')
+    AS2LITE().write_to_cache('CS_ScanEndDate', '-')
 
-    as2LiteClass().write_to_cache('PS_TotalRepos', '0')
-    as2LiteClass().write_to_cache('PS_ReposCompliant', '0')
-    as2LiteClass().write_to_cache('PS_ReposNonCompliant', '0')
-    as2LiteClass().write_to_cache('PS_NoOfSecretsFound', '0')
-    as2LiteClass().write_to_cache('PS_ScanStartDate', '-')
-    as2LiteClass().write_to_cache('PS_ScanEndDate', '-')
+    AS2LITE().write_to_cache('PS_TotalRepos', '0')
+    AS2LITE().write_to_cache('PS_ReposCompliant', '0')
+    AS2LITE().write_to_cache('PS_ReposNonCompliant', '0')
+    AS2LITE().write_to_cache('PS_NoOfSecretsFound', '0')
+    AS2LITE().write_to_cache('PS_ScanStartDate', '-')
+    AS2LITE().write_to_cache('PS_ScanEndDate', '-')
 
     # Sets default values to the DB during application startup 
     if not gitLeaksDbHandler.session.query(gitLeaksSettingsTable).all():

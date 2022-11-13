@@ -2,7 +2,7 @@ import os, re, glob
 from subprocess import Popen, PIPE
 from random import randint, randrange
 
-class downloadRepositoryClass():
+class DownloadRepository():
     def __init__(self, user_name, auth_token, ssh, repo_directory, repo, branch, scanner_directory_path):
         self.downloadRepo = True
         self.downloadRepoComplete = False

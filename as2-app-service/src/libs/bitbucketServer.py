@@ -1,6 +1,6 @@
 import re, sys, requests
 from datetime import datetime
-from models.gitLeaksModel import gitLeaksDbHandler, gitLeaksEventsTable, gitLeaksSettingsTable
+from models.gitleaks import gitLeaksDbHandler, gitLeaksEventsTable, gitLeaksSettingsTable
 from sqlalchemy import select, update, text
 
 class BitbucketServer():

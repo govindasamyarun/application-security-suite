@@ -1,7 +1,7 @@
 import shutil, re, json
 from subprocess import Popen, PIPE
 
-class gitleaksClass():
+class Gitleaks():
     def __init__(self, gitleaks_path, scanner_directory, branch, temp_dir):
         self.gitleaks_path = gitleaks_path
         self.scanner_directory = scanner_directory

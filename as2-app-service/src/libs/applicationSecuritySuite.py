@@ -7,27 +7,28 @@ from subprocess import Popen, PIPE
 from datetime import datetime
 from flask import request, jsonify, session
 from threading import Thread
-from config import gitLeaksConfig
+from config import GitleaksConfig
 from urllib.parse import unquote, parse_qs
 from flask import send_file
 from sqlalchemy.sql import text
 from random import randint, randrange
-from models.gitLeaksModel import gitLeaksDbHandler, gitLeaksEventsTable, gitLeaksSettingsTable
+from models.gitleaks import gitLeaksDbHandler, gitLeaksEventsTable, gitLeaksSettingsTable
 from sqlalchemy import select, update, text
 from flask import current_app
-from libs.downloadRepository import downloadRepositoryClass
-from libs.gitleaks import gitleaksClass
+from libs.downloadRepository import DownloadRepository
+from libs.gitleaks import Gitleaks
 from libs.bitbucketServer import BitbucketServer
+from libs.dbOperations import DBOperations
 
 import threading, glob
 import queue
 
-class as2Class:
+class AS2:
     def __init__(self):
         # Set values from GL settings table 
-        self.settingsTable = self.dbSelectOneRecord(gitLeaksSettingsTable.__tablename__, 'id=1')
+        self.settingsTable = DBOperations().selectOneRecord(gitLeaksSettingsTable.__tablename__, 'id=1')
         # Report file path 
-        self.scanner_results_config_file_path = gitLeaksConfig.scanner_results_config_file_path
+        self.scanner_results_config_file_path = GitleaksConfig.scanner_results_config_file_path
         # Variables used for scan status 
         self.no_of_secrets = {"project": {}, "repository": {}}
         self.secrets_count = []
@@ -85,29 +86,6 @@ class as2Class:
     def formatKeys(self, k):
         # This function is to remove the special characters except '-'
         return re.sub('[^A-Z-a-z0-9]+', '', k.lower())
-
-    def dbSelectOneRecord(self, tableName, condition):
-        # This function returns a record that contains all columns from a table 
-        print('INFO - as2Class - Execute dbSelectOneRecord function')
-        select_sql = text('select * from {} where {}'.format(tableName, condition))
-        tableData = gitLeaksDbHandler.session.execute(select_sql)
-        for t in tableData:
-            data = dict(t)
-        return data
-
-    def dbUpdateRecord(self, tableName, condition, values):
-        # This function updates a record in a table 
-        print('INFO - as2Class - Execute dbUpdateRecord function')
-        try:
-            #gitLeaksDbHandler.session.execute(update(tableInstatnce).where(condition).values(values['data']))
-            update_sql = text('update {} set {} where {}'.format(tableName, values['data'], condition))
-            updateData = gitLeaksDbHandler.session.execute(update_sql)
-            gitLeaksDbHandler.session.commit()
-            data = {'status': 'success'}
-        except Exception as e:
-            print('ERROR - dbUpdateRecord - Failed to update record # {}'.format(e))
-            data = {'status': 'error'}
-        return data
 
     def slack_notification(self, scan_aggregated_results):
         # This function post message to the given slack channel 
@@ -259,11 +237,11 @@ class as2Class:
         # This function is to download the repository and performs Gitleaks scan 
         print('INFO - as2Class - Execute scanner function')
 
-        download = downloadRepositoryClass(self.bitbucket_user_name, self.bitbucket_auth_token, ssh, repo_directory, repository, branch, self.scanner_directory).download()
+        download = DownloadRepository(self.bitbucket_user_name, self.bitbucket_auth_token, ssh, repo_directory, repository, branch, self.scanner_directory).download()
 
         #if scanRepo and len(dirContent) > 0:
         if download['downloadRepoComplete'] and download['no_of_directories']:
-            gl_scan_results = gitleaksClass(self.gitleaks_path, self.scanner_directory, branch, download['temp_dir']).scan()
+            gl_scan_results = Gitleaks(self.gitleaks_path, self.scanner_directory, branch, download['temp_dir']).scan()
             self.process_scanner_output(project, repository, repo_directory, ssh, branch, gl_scan_results)
         else:
             print('ERROR - scanner - Failed to download repository {}'.format(repository))
@@ -290,9 +268,9 @@ class as2Class:
                         for j in range(len(jobs["links"]["clone"])):
                             if jobs["links"]["clone"][j]["name"] == "http":
                                 #self.scanner(jobs["links"]["clone"][j]["href"], jobs["name"], jobs["slug"], "master", jobs["project"]["name"])
-                                downloadResults = downloadRepositoryClass(self.bitbucket_user_name, self.bitbucket_auth_token, jobs["links"]["clone"][j]["href"], jobs["slug"], jobs["name"], branch, self.scanner_directory).download()
+                                downloadResults = DownloadRepository(self.bitbucket_user_name, self.bitbucket_auth_token, jobs["links"]["clone"][j]["href"], jobs["slug"], jobs["name"], branch, self.scanner_directory).download()
                                 if downloadResults['downloadRepoComplete'] and downloadResults['no_of_directories']:
-                                    gl_scan_results = gitleaksClass(self.gitleaks_path, self.scanner_directory, branch, downloadResults['temp_dir']).scan()
+                                    gl_scan_results = Gitleaks(self.gitleaks_path, self.scanner_directory, branch, downloadResults['temp_dir']).scan()
                                     self.no_of_repos_scanned.append(1)
                                     self.process_scanner_output(jobs["project"]["name"], jobs["name"], jobs["slug"], jobs["links"]["clone"][j]["href"], branch, gl_scan_results)
                                     self.write_to_cache('CS_NoOfReposScanned', str(sum(self.no_of_repos_scanned)))
@@ -312,7 +290,7 @@ class as2Class:
                     work.put(repos[i])
             
             # append the worker Queue jobs to thread
-            for unused_index in range(int(gitLeaksConfig.thread_count)):
+            for unused_index in range(int(GitleaksConfig.thread_count)):
                 thread = threading.Thread(target=worker)
                 thread.daemon = True
                 thread.start()
@@ -356,9 +334,9 @@ class as2Class:
                                     # Remove the special characters - ''.join(e for e in branch if e.isalnum())
                                     self.queueCheck[self.formatKeys(jobs["project"]["name"]+'-'+jobs['name']+'-'+branch)] = True
                                     #self.scanner(jobs["links"]["clone"][j]["href"], jobs["name"], jobs["slug"], b, jobs["project"]["name"])
-                                    downloadResults = downloadRepositoryClass(self.bitbucket_user_name, self.bitbucket_auth_token, jobs["links"]["clone"][j]["href"], jobs["slug"], jobs["name"], branch, self.scanner_directory).download()
+                                    downloadResults = DownloadRepository(self.bitbucket_user_name, self.bitbucket_auth_token, jobs["links"]["clone"][j]["href"], jobs["slug"], jobs["name"], branch, self.scanner_directory).download()
                                     if downloadResults['downloadRepoComplete'] and downloadResults['no_of_directories']:
-                                        gl_scan_results = gitleaksClass(self.gitleaks_path, self.scanner_directory, branch, downloadResults['temp_dir']).scan()
+                                        gl_scan_results = Gitleaks(self.gitleaks_path, self.scanner_directory, branch, downloadResults['temp_dir']).scan()
                                         self.process_scanner_output(jobs["project"]["name"], jobs["name"], jobs["slug"], jobs["links"]["clone"][j]["href"], branch, gl_scan_results)
                                         self.write_to_cache('CS_NoOfSecretsFound', str(sum(self.secrets_count)))
                                         self.write_to_cache('CS_ReposNonCompliant', str(len(self.no_of_secrets["repository"].keys())))
@@ -380,7 +358,7 @@ class as2Class:
                     work.put(repos[i])
             
             # append the worker Queue jobs to thread
-            for unused_index in range(int(gitLeaksConfig.thread_count)):
+            for unused_index in range(int(GitleaksConfig.thread_count)):
                 thread = threading.Thread(target=worker)
                 thread.daemon = True
                 thread.start()
@@ -438,16 +416,6 @@ class as2Class:
 
             #print("DEBUG - scan_engine - isLastPage={}, nextPageStart={}, repoLen={}".format(repo_isLastPage, repo_nextPageStart, str(len(repos))))
 
-            # isLastPage is to handle the pagination 
-            '''while(not self.isLastPage):
-                try:
-                    self.isLastPage, self.nextPageStart, repo = self.get_repos(self.start + str(self.nextPageStart))
-                    repos = repos + repo
-                    #print("DEBUG - isLastPage={}, nextPageStart={}, repoLen={}".format(repo_isLastPage, repo_nextPageStart, str(len(repos))))
-                except KeyError as e:
-                    print('ERROR - scan_engine - isLastPage: {}, error: {}'.format(self.isLastPage, e))
-                    self.isLastPage = True'''
-
             # Get list of repositories 
             repos = BitbucketServer().get_repos()
 
@@ -482,7 +450,7 @@ class as2Class:
                 self.slack_notification(self.no_of_secrets["project"])
 
 # This is a lite weight class to minimize the DB calls and varaiable processing 
-class as2LiteClass:
+class AS2LITE:
     def __init__(self):
         # Redis cache to store scan status
         self.redis = redis.Redis(host=current_app.config["REDIS_HOST"], port=current_app.config["REDIS_PORT"], db=0)
