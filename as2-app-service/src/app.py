@@ -3,11 +3,11 @@ import os, sys, logging
 from flask import Flask
 from flask_migrate import Migrate
 import sqlalchemy
-from routes.gitLeaksRoute import gitLeaksRoute
+from routes.apiRoute import apiRoute
 from routes.webRoute import webRoute
 from models.gitLeaksModel import gitLeaksDbHandler, gitLeaksSettingsTable
 from sqlalchemy import event, inspect
-from controllers.applicationSecuritySuite import as2LiteClass
+from libs.applicationSecuritySuite import as2LiteClass
 
 app = Flask(__name__)
 
@@ -54,7 +54,7 @@ with app.app_context():
 # Routes to the html files
 app.register_blueprint(webRoute, url_prefix='/web')
 # Routes to the Gitelaks controller 
-app.register_blueprint(gitLeaksRoute, url_prefix='/gl')
+app.register_blueprint(apiRoute, url_prefix='/api')
 
 
 if __name__ == "__main__":

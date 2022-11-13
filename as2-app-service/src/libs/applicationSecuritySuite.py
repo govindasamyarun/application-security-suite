@@ -17,6 +17,7 @@ from sqlalchemy import select, update, text
 from flask import current_app
 from libs.downloadRepository import downloadRepositoryClass
 from libs.gitleaks import gitleaksClass
+from libs.bitbucketServer import BitbucketServer
 
 import threading, glob
 import queue
@@ -107,54 +108,6 @@ class as2Class:
             print('ERROR - dbUpdateRecord - Failed to update record # {}'.format(e))
             data = {'status': 'error'}
         return data
-
-    def get_repos(self, queryString):
-        # This function returns a complete repository list 
-        print('INFO - as2Class - Execute get_repos function')
-        try:
-            repos_output = requests.get(self.repo_url+queryString, headers = self.bitbucket_headers)
-            repos_output = repos_output.json()
-            self.nextPageStart = repos_output["nextPageStart"]
-            self.isLastPage = repos_output["isLastPage"]
-        except KeyError as e:
-            #print('DEBUG - get_repos - KeyError: {}'.format(e))
-            self.nextPageStart = 0
-            self.isLastPage = repos_output["isLastPage"]
-        except Exception as e:
-            print('ERROR - get_repos - Failed to execute get_repos function - {}'.format(e))
-        #print('DEBUG - get_repos - isLastPage={}, nextPageStart={}'.format(repos_output["isLastPage"], self.nextPageStart))
-        return self.isLastPage, self.nextPageStart, repos_output["values"]
-
-    def get_latest_commit_details(self, project, repo):
-        # This function captures latest commit details 
-        print('INFO - as2Class - Execute get_latest_commit_details function')
-        try:
-            commit_url = 'projects/{}/repos/{}/commits?limit=1'.format(project, repo)
-            commit_output = requests.get(self.bitbucket_base_url + commit_url, headers = self.bitbucket_headers)
-            commit_output = commit_output.json()
-            committer_timestamp = datetime.fromtimestamp(commit_output['values'][0]['committerTimestamp'] / 1000)
-            committer_timestamp = datetime.strftime(committer_timestamp, '%d-%b-%Y %H:%M:%S')
-            self.latest_commit_details[self.formatKeys(project+'-'+repo)] = {'committer_name': commit_output['values'][0]['committer']['name'], 'committer_email': commit_output['values'][0]['committer']['emailAddress'], 'committer_message': commit_output['values'][0]['message'], 'committer_timestamp': committer_timestamp}
-        except Exception as e:
-            print('ERROR - get_latest_commit_details - Error: {}'.format(e))
-
-    def get_branches(self, queryString, project, repository):
-        # This function returns branch details  
-        print('INFO - as2Class - Execute get_branches function')
-        branch = []
-        branch_url = self.bitbucket_base_url + "projects/{}/repos/{}/branches".format(project, repository)
-        try:
-            branch_output = requests.get(branch_url+queryString, headers = self.bitbucket_headers)
-            branch_output = branch_output.json()
-            for i in range(len(branch_output["values"])):
-                branch.append(branch_output["values"][i]["displayId"])
-            self.branch_nextPageStart = branch_output["nextPageStart"]
-            self.branch_isLastPage = branch_output["isLastPage"]
-        except KeyError as e:
-            self.branch_nextPageStart = 0
-            self.branch_isLastPage = branch_output["isLastPage"]
-        #print('DEBUG - get_branches - isLastPage={}, nextPageStart={}'.format(branch_output["isLastPage"], self.branch_nextPageStart))
-        return self.branch_isLastPage, self.branch_nextPageStart, branch
 
     def slack_notification(self, scan_aggregated_results):
         # This function post message to the given slack channel 
@@ -330,7 +283,8 @@ class as2Class:
                     print('INFO - scan_master_branch - Added to Queue : {}'.format(self.formatKeys(jobs["project"]["name"]+'-'+jobs['name']+'-'+branch)))
                     self.queueCheck[self.formatKeys(jobs["project"]["name"]+'-'+jobs['name']+'-'+branch)] = True
                     # Get last commit details 
-                    self.get_latest_commit_details(jobs["project"]["name"], jobs["name"])
+                    #self.get_latest_commit_details(jobs["project"]["name"], jobs["name"])
+                    self.latest_commit_details[self.formatKeys(jobs["project"]["name"]+'-'+jobs["name"])] = BitbucketServer().get_latest_commit_details(jobs["project"]["name"], jobs["name"])
                     
                     try:
                         for j in range(len(jobs["links"]["clone"])):
@@ -383,24 +337,19 @@ class as2Class:
             work = queue.Queue()
             threads = []
             def worker():
-                branches = []
                 while not self.end_process:
                     print('INFO - scan_all_branches - QueueSize: {}, ThreadCount: {}'.format(work.qsize(), threading.active_count()))
                     jobs = work.get(True, 5)
                     # Get last commit details 
-                    self.get_latest_commit_details(jobs["project"]["name"], jobs["name"])
+                    #self.get_latest_commit_details(jobs["project"]["name"], jobs["name"])
+                    self.latest_commit_details[self.formatKeys(jobs["project"]["name"]+'-'+jobs["name"])] = BitbucketServer().get_latest_commit_details(jobs["project"]["name"], jobs["name"])
 
                     try:
                         for j in range(len(jobs["links"]["clone"])):
                             if jobs["links"]["clone"][j]["name"] == "http":
                                 # Get branch details for each repository 
-                                while(not self.branch_isLastPage):
-                                    try:
-                                        self.branch_isLastPage, self.branch_nextPageStart, branchOutput = self.get_branches(self.start + str(self.branch_nextPageStart), jobs["project"]["name"], jobs["name"])
-                                        branches = branches + branchOutput
-                                    except KeyError as e:
-                                        print('ERROR - scan_all_branches - isLastPage: {}, error: {}'.format(self.branch_isLastPage, e))
-                                        self.branch_isLastPage = True
+                                branches = BitbucketServer().get_branches(jobs["project"]["name"], jobs["name"])
+                                
                                 for branch in branches:
                                     #print('DEBUG - scan_all_branches repository: {}, branch: {}'.format(jobs["name"], branch))
                                     print('INFO - scan_all_branches - Add to Queue : {}'.format(self.formatKeys(jobs["project"]["name"]+'-'+jobs['name']+'-'+branch)))
@@ -490,14 +439,17 @@ class as2Class:
             #print("DEBUG - scan_engine - isLastPage={}, nextPageStart={}, repoLen={}".format(repo_isLastPage, repo_nextPageStart, str(len(repos))))
 
             # isLastPage is to handle the pagination 
-            while(not self.isLastPage):
+            '''while(not self.isLastPage):
                 try:
                     self.isLastPage, self.nextPageStart, repo = self.get_repos(self.start + str(self.nextPageStart))
                     repos = repos + repo
                     #print("DEBUG - isLastPage={}, nextPageStart={}, repoLen={}".format(repo_isLastPage, repo_nextPageStart, str(len(repos))))
                 except KeyError as e:
                     print('ERROR - scan_engine - isLastPage: {}, error: {}'.format(self.isLastPage, e))
-                    self.isLastPage = True
+                    self.isLastPage = True'''
+
+            # Get list of repositories 
+            repos = BitbucketServer().get_repos()
 
             # Set the CS total repo count 
             self.write_to_cache('CS_TotalRepos', str(len(repos)))

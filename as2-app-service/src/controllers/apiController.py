@@ -8,9 +8,9 @@ from threading import Thread
 from config import gitLeaksConfig
 from urllib.parse import unquote, parse_qs
 from flask import send_file
-from controllers.applicationSecuritySuite import as2Class, as2LiteClass
 from models.gitLeaksModel import gitLeaksDbHandler, gitLeaksSettingsTable
 from sqlalchemy import select, update, text
+from libs.applicationSecuritySuite import as2Class, as2LiteClass
 
 def settings_data():
     # This function is to process and store the settings values to the db 
