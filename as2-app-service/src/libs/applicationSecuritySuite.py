@@ -1,27 +1,16 @@
-from dataclasses import dataclass
-from logging import exception
-import os, sys, configparser, requests, shutil, csv, json, re, redis
+import os, sys, shutil, csv, re
+import threading, queue
 from datetime import datetime
 from distutils.util import strtobool
-from subprocess import Popen, PIPE
 from datetime import datetime
-from flask import request, jsonify, session
-from threading import Thread
 from config import GitleaksConfig
-from urllib.parse import unquote, parse_qs
-from flask import send_file
-from sqlalchemy.sql import text
-from random import randint, randrange
 from models.gitleaks import gitLeaksDbHandler, gitLeaksEventsTable, gitLeaksSettingsTable
-from sqlalchemy import select, update, text
-from flask import current_app
 from libs.downloadRepository import DownloadRepository
 from libs.gitleaks import Gitleaks
 from libs.bitbucketServer import BitbucketServer
 from libs.dbOperations import DBOperations
-
-import threading, glob
-import queue
+from libs.notifications import Jira, Slack
+from libs.cache import Cache
 
 class AS2:
     def __init__(self):
@@ -34,47 +23,44 @@ class AS2:
         self.secrets_count = []
         self.no_of_repos_scanned = []
         self.queueCheck = {}
-        self.nextPageStart = 0 # get_repos pagination
-        self.isLastPage = False # get_repos pagination
-        # variable used in scan_all_branches fucntion
-        self.branch_nextPageStart = 0 
-        self.branch_isLastPage = False
+
         # to control worker function 
         self.end_process = False 
-        # Redis cache to store scan status
-        self.redis = redis.Redis(host=current_app.config["REDIS_HOST"], port=current_app.config["REDIS_PORT"], db=0)
+
         # Set values from GL settings table 
         try:
+            # Bitbucket variables
             self.bitbucket_host = self.settingsTable['bitbucketHost']
-            self.bitbucket_base_url = "https://{}/rest/api/1.0/".format(self.bitbucket_host)
-            self.limit = "?limit={}".format(self.settingsTable['bitbucketLimit'])
+            self.limit = str(self.settingsTable['bitbucketLimit'])
             self.bitbucket_auth_token = self.settingsTable['bitbucketAuthToken']
             self.bitbucket_user_name = self.settingsTable['bitbucketUserName']
             self.scan_all_repo_branches = self.settingsTable['scannerScanAllBranches']
+            # Scanner variables 
             self.scanner_directory = os.path.join(os.path.abspath(self.settingsTable['scannerPathToDownloadRepository']), '', '')
             self.scanner_results_directory = os.path.join(os.path.abspath(self.settingsTable['scannerResultsDirectory']), '', '')
+            # Slack variables 
             self.slack_enable = self.settingsTable['slackEnable']
-            self.slack_base_url = "https://{}/api/".format(self.settingsTable['slackHost'])
+            self.slack_host = self.settingsTable['slackHost']
             self.slack_auth_token = self.settingsTable['slackAuthToken']
             self.slack_channel = self.settingsTable['slackChannel']
-            self.slack_message = ":alert: *" + self.settingsTable['slackMessage'] + "* :alert: \n\n"
-            self.gitleaks_path = self.settingsTable['gitleaksPath']
+            self.slack_message = self.settingsTable['slackMessage']
+            # Jira variables
             self.jira_enable = self.settingsTable['jiraEnable']
             self.jira_host = self.settingsTable['jiraHost']
             self.jira_epic_id = self.settingsTable['jiraEpicID']
             self.jira_user_name = self.settingsTable['jiraUserName']
             self.jira_auth_token = self.settingsTable['jiraAuthToken']
+            # Gitleaks variable
+            self.gitleaks_path = self.settingsTable['gitleaksPath']
         except:
             print('ERROR - as2Class_init - Failed to connect with the database')
             sys.exit()
 
-        self.repo_url = self.bitbucket_base_url + "repos"
-        self.slack_post_message_url = self.slack_base_url + "chat.postMessage"
-        self.start = self.limit + "&start="
-        self.bitbucket_headers = {"Authorization": "Bearer " + self.bitbucket_auth_token}
-        self.slack_headers = {"Content-Type": "application/x-www-form-urlencoded", "Authorization": "Bearer " + self.slack_auth_token}
         # Commit details
         self.latest_commit_details = {}
+        # Create objects
+        self.BitbucketServer = BitbucketServer(self.bitbucket_host, self.bitbucket_user_name, self.bitbucket_auth_token, self.limit)
+        self.Cache = Cache()
 
     def dt(self):
         # This function returns current date and time 
@@ -87,80 +73,6 @@ class AS2:
         # This function is to remove the special characters except '-'
         return re.sub('[^A-Z-a-z0-9]+', '', k.lower())
 
-    def slack_notification(self, scan_aggregated_results):
-        # This function post message to the given slack channel 
-        print('INFO - as2Class - Execute slack_notifications function')
-        for k,v in list(scan_aggregated_results.items()):
-            if v == 0:
-                del scan_aggregated_results[k]
-        scan_aggregated_results = str(scan_aggregated_results)
-        scan_aggregated_results = scan_aggregated_results.replace('}', '')
-        scan_aggregated_results = scan_aggregated_results.replace('{', '')
-        scan_aggregated_results = scan_aggregated_results.replace("'", '')
-        scan_aggregated_results = scan_aggregated_results.replace(', ', '\n')
-        slack_message = '[{"type":"section","text":{"type":"mrkdwn","text": "' + self.slack_message + scan_aggregated_results + '"}}]'
-        slack_data = {"channel": self.slack_channel, "type": "message", "blocks": slack_message}
-        slack_output = requests.post(self.slack_post_message_url, headers = self.slack_headers, data = slack_data)
-        #print('DEBUG - slack_notification - {}'.format(slack_output.text))
-
-    def jira_notification(self):
-        # This function attaches the scan report to the EPIC ticket
-        print('INFO - as2Class - Execute jira function')
-        jira_url = "https://{}/rest/api/3/issue/{}/attachments".format(self.jira_host, self.jira_epic_id)
-        jira_credentials  = requests.auth.HTTPBasicAuth(self.jira_user_name, self.jira_auth_token)
-        jira_headers = { 'X-Atlassian-Token': 'no-check' }
-        jira_files = [ ('file', ('file.txt', open(self.scanner_results_config_file_path,'rb'), 'text/plain')) ]
-        jira_output = requests.post(jira_url, auth=jira_credentials, files=jira_files, headers=jira_headers)
-        #print('DEBUG - jira_notification - output: {}'.format(jira_output.text))
-
-    def authCheck(self):
-        # This function ensures Bitbucket, Slack & Jira connectivity and authentication before the settings are committed to the database 
-        # And also before beginning the scan process. 
-        print('INFO - as2Class - Execute authCheck function')
-        bitbucket_url = "https://{}/rest/api/1.0/projects".format(self.bitbucket_host)
-        bitbucket = requests.get(bitbucket_url, headers=self.bitbucket_headers)
-        bitbucket_status_code = bitbucket.status_code
-
-        # The slack auth code is set to 200, if the slack_enable setting is set to false 
-        # This is to handle the auth check 
-        if strtobool(self.slack_enable):
-            slack_url = "https://slack.com/api/auth.test"
-            slack = requests.post(slack_url, headers = self.slack_headers)
-            slack_response_text = json.loads(slack.text)
-            if slack_response_text['ok']:
-                slack_status_code = 200
-            else:
-                slack_status_code = 401
-        else:
-            slack_status_code = 200
-
-        # The jira auth code is set to 200, if the jira_enable setting is set to false 
-        # This is to handle the auth check 
-        if strtobool(self.jira_enable):
-            jira_url = "https://{}/rest/api/2/project".format(self.jira_host)
-            jira_credentials  = requests.auth.HTTPBasicAuth(self.jira_user_name, self.jira_auth_token)
-            jira=requests.get(jira_url, auth=jira_credentials)
-            jira_status_code = jira.status_code
-        else:
-            jira_status_code = 200
-
-        # Execute a db query to verify the connection 
-        from app import app
-        with app.app_context():
-            try:
-                gitLeaksDbHandler.session.query(text("1")).from_statement(text("SELECT 1")).all()
-                db_status_code = 200
-            except Exception as e:
-                print('ERROR - authCheck - error: {}'.format(e))
-                db_status_code = 0
-
-        print('INFO - authCheck - bitbucket: {}, slack: {}, jira: {}, db: {}'.format(bitbucket_status_code, slack_status_code, jira_status_code, db_status_code))
-        if (bitbucket_status_code == 200 and slack_status_code == 200 and jira_status_code == 200 and db_status_code == 200):
-            return True
-        else:
-            self.write_to_cache('CS_Status', 'Error')
-            return False
-
     def update_ps_results(self):
         # This function writes the scan results to the cache. 
         # The home page uses PS_* cache keys 
@@ -172,31 +84,22 @@ class AS2:
         shutil.move(self.scanner_results_directory+'scanner_results.csv', self.scanner_results_config_file_path)
 
         # Set the PS status 
-        totalRepos = self.redis.get('CS_TotalRepos').decode('utf-8')
-        reposNonCompliant = self.redis.get('CS_ReposNonCompliant').decode('utf-8')
-        self.write_to_cache('PS_TotalRepos', self.redis.get('CS_TotalRepos').decode('utf-8'))
-        self.write_to_cache('PS_ReposNonCompliant', self.redis.get('CS_ReposNonCompliant').decode('utf-8'))
-        self.write_to_cache('PS_ReposCompliant', str(int(totalRepos) - int(reposNonCompliant)))
-        self.write_to_cache('PS_NoOfSecretsFound', self.redis.get('CS_NoOfSecretsFound').decode('utf-8'))
-        self.write_to_cache('PS_ScanStartDate', self.redis.get('CS_ScanStartDate').decode('utf-8'))
-        self.write_to_cache('PS_ScanEndDate', self.redis.get('CS_ScanEndDate').decode('utf-8'))
+        totalRepos = self.Cache.read('CS_TotalRepos')
+        reposNonCompliant = self.Cache.read('CS_ReposNonCompliant')
+        self.Cache.write('PS_TotalRepos', self.Cache.read('CS_TotalRepos'))
+        self.Cache.write('PS_ReposNonCompliant', self.Cache.read('CS_ReposNonCompliant'))
+        self.Cache.write('PS_ReposCompliant', str(int(totalRepos) - int(reposNonCompliant)))
+        self.Cache.write('PS_NoOfSecretsFound', self.Cache.read('CS_NoOfSecretsFound'))
+        self.Cache.write('PS_ScanStartDate', self.Cache.read('CS_ScanStartDate'))
+        self.Cache.write('PS_ScanEndDate', self.Cache.read('CS_ScanEndDate'))
         
         # Write the scan results to the events table 
         from app import app
         with app.app_context():
-            compliance_percentage = int((int(self.redis.get('PS_ReposCompliant').decode('utf-8'))/int(self.redis.get('PS_TotalRepos').decode('utf-8'))*100)) if int(self.redis.get('PS_TotalRepos').decode('utf-8')) != 0 else 0
-            add_record = gitLeaksEventsTable(totalrepos=self.redis.get('PS_TotalRepos').decode('utf-8'), reposcompliant=self.redis.get('PS_ReposCompliant').decode('utf-8'), reposnoncompliant=self.redis.get('PS_ReposNonCompliant').decode('utf-8'), noofsecretsfound=self.redis.get('PS_NoOfSecretsFound').decode('utf-8'), compliancepercentage=compliance_percentage, scanstartdate=self.redis.get('PS_ScanStartDate').decode('utf-8'), scanenddate=self.redis.get('PS_ScanEndDate').decode('utf-8'))
+            compliance_percentage = int((int(self.Cache.read('PS_ReposCompliant'))/int(self.Cache.read('PS_TotalRepos'))*100)) if int(self.Cache.read('PS_TotalRepos')) != 0 else 0
+            add_record = gitLeaksEventsTable(totalrepos=self.Cache.read('PS_TotalRepos'), reposcompliant=self.Cache.read('PS_ReposCompliant'), reposnoncompliant=self.Cache.read('PS_ReposNonCompliant'), noofsecretsfound=self.Cache.read('PS_NoOfSecretsFound'), compliancepercentage=compliance_percentage, scanstartdate=self.Cache.read('PS_ScanStartDate'), scanenddate=self.Cache.read('PS_ScanEndDate'))
             gitLeaksDbHandler.session.add(add_record)
             gitLeaksDbHandler.session.commit()
-
-    def write_to_cache(self, k, v):
-        # This function writes the key and value to the cache 
-        self.redis.set(k, v)
-
-    def read_cache(self, k):
-        # This function retrieves the value for a given key from the cache 
-        v = self.redis.get(k).decode('utf-8')
-        return v
 
     def process_scanner_output(self, project, repository, slug, ssh, branch, scanner_results):
         # This function process the Gitleaks output 
@@ -226,7 +129,7 @@ class AS2:
                 w.writerow(scanner_results_dict.values())
 
         # Update number of secrets 
-        self.write_to_cache('CS_NoOfSecretsFound', str(sum(self.secrets_count)))
+        self.Cache.write('CS_NoOfSecretsFound', str(sum(self.secrets_count)))
         # Remove the key from queueCheck
         # To identify the repositories that are not downloaded or scanned 
         del[self.queueCheck[self.formatKeys(project+'-'+repository+'-'+branch)]]
@@ -239,7 +142,6 @@ class AS2:
 
         download = DownloadRepository(self.bitbucket_user_name, self.bitbucket_auth_token, ssh, repo_directory, repository, branch, self.scanner_directory).download()
 
-        #if scanRepo and len(dirContent) > 0:
         if download['downloadRepoComplete'] and download['no_of_directories']:
             gl_scan_results = Gitleaks(self.gitleaks_path, self.scanner_directory, branch, download['temp_dir']).scan()
             self.process_scanner_output(project, repository, repo_directory, ssh, branch, gl_scan_results)
@@ -262,7 +164,7 @@ class AS2:
                     self.queueCheck[self.formatKeys(jobs["project"]["name"]+'-'+jobs['name']+'-'+branch)] = True
                     # Get last commit details 
                     #self.get_latest_commit_details(jobs["project"]["name"], jobs["name"])
-                    self.latest_commit_details[self.formatKeys(jobs["project"]["name"]+'-'+jobs["name"])] = BitbucketServer().get_latest_commit_details(jobs["project"]["name"], jobs["name"])
+                    self.latest_commit_details[self.formatKeys(jobs["project"]["name"]+'-'+jobs["name"])] = self.BitbucketServer.get_latest_commit_details(jobs["project"]["name"], jobs["name"])
                     
                     try:
                         for j in range(len(jobs["links"]["clone"])):
@@ -273,9 +175,9 @@ class AS2:
                                     gl_scan_results = Gitleaks(self.gitleaks_path, self.scanner_directory, branch, downloadResults['temp_dir']).scan()
                                     self.no_of_repos_scanned.append(1)
                                     self.process_scanner_output(jobs["project"]["name"], jobs["name"], jobs["slug"], jobs["links"]["clone"][j]["href"], branch, gl_scan_results)
-                                    self.write_to_cache('CS_NoOfReposScanned', str(sum(self.no_of_repos_scanned)))
-                                    self.write_to_cache('CS_NoOfSecretsFound', str(sum(self.secrets_count)))
-                                    self.write_to_cache('CS_ReposNonCompliant', str(len(self.no_of_secrets["repository"].keys())))
+                                    self.Cache.write('CS_NoOfReposScanned', str(sum(self.no_of_repos_scanned)))
+                                    self.Cache.write('CS_NoOfSecretsFound', str(sum(self.secrets_count)))
+                                    self.Cache.write('CS_ReposNonCompliant', str(len(self.no_of_secrets["repository"].keys())))
                                 else:
                                     print('ERROR - scanner - Failed to download repository {}'.format(jobs["name"]))
                                     return {'data': 'error'}
@@ -286,7 +188,7 @@ class AS2:
 
             # assign a jobs to worker Queue
             if repos:
-                for i in range(len(repos)):
+                for i in range(len(repos[:30])):
                     work.put(repos[i])
             
             # append the worker Queue jobs to thread
@@ -320,13 +222,13 @@ class AS2:
                     jobs = work.get(True, 5)
                     # Get last commit details 
                     #self.get_latest_commit_details(jobs["project"]["name"], jobs["name"])
-                    self.latest_commit_details[self.formatKeys(jobs["project"]["name"]+'-'+jobs["name"])] = BitbucketServer().get_latest_commit_details(jobs["project"]["name"], jobs["name"])
+                    self.latest_commit_details[self.formatKeys(jobs["project"]["name"]+'-'+jobs["name"])] = self.BitbucketServer.get_latest_commit_details(jobs["project"]["name"], jobs["name"])
 
                     try:
                         for j in range(len(jobs["links"]["clone"])):
                             if jobs["links"]["clone"][j]["name"] == "http":
                                 # Get branch details for each repository 
-                                branches = BitbucketServer().get_branches(jobs["project"]["name"], jobs["name"])
+                                branches = self.BitbucketServer.get_branches(jobs["project"]["name"], jobs["name"])
                                 
                                 for branch in branches:
                                     #print('DEBUG - scan_all_branches repository: {}, branch: {}'.format(jobs["name"], branch))
@@ -338,15 +240,15 @@ class AS2:
                                     if downloadResults['downloadRepoComplete'] and downloadResults['no_of_directories']:
                                         gl_scan_results = Gitleaks(self.gitleaks_path, self.scanner_directory, branch, downloadResults['temp_dir']).scan()
                                         self.process_scanner_output(jobs["project"]["name"], jobs["name"], jobs["slug"], jobs["links"]["clone"][j]["href"], branch, gl_scan_results)
-                                        self.write_to_cache('CS_NoOfSecretsFound', str(sum(self.secrets_count)))
-                                        self.write_to_cache('CS_ReposNonCompliant', str(len(self.no_of_secrets["repository"].keys())))
+                                        self.Cache.write('CS_NoOfSecretsFound', str(sum(self.secrets_count)))
+                                        self.Cache.write('CS_ReposNonCompliant', str(len(self.no_of_secrets["repository"].keys())))
                                     else:
                                         print('ERROR - scanner - Failed to download repository {}'.format(jobs["name"]))
                                         return {'data': 'error'}
 
                         # Write CS status to cache 
                         self.no_of_repos_scanned.append(1)
-                        self.write_to_cache('CS_NoOfReposScanned', str(sum(self.no_of_repos_scanned)))
+                        self.Cache.write('CS_NoOfReposScanned', str(sum(self.no_of_repos_scanned)))
                     except queue.Empty:
                         print('INFO - scan_all_branches - Empty queue')
 
@@ -354,7 +256,7 @@ class AS2:
 
             # assign a jobs to worker Queue
             if repos:
-                for i in range(len(repos)):
+                for i in range(len(repos[:30])):
                     work.put(repos[i])
             
             # append the worker Queue jobs to thread
@@ -379,26 +281,31 @@ class AS2:
         # This function initialize the scan 
         # Executes Jira and Slack notification function once the scan is complete 
         print('INFO - as2Class - Execute scan_engine function')
-        if self.redis.get('CS_Status').decode('utf-8') == 'In Progress':
+        if self.Cache.read('CS_Status') == 'In Progress':
             print('INFO - scan_engine - Scan is in progress')
             return None
         else:
-            self.write_to_cache('CS_Status', 'In Progress')
-            self.write_to_cache('CS_TotalRepos', '0')
-            self.write_to_cache('CS_NoOfReposScanned', '0')
-            self.write_to_cache('CS_ReposNonCompliant', '0')
-            self.write_to_cache('CS_NoOfSecretsFound', '0')
-            self.write_to_cache('CS_PercentageCompletion', '0')
-            self.write_to_cache('CS_ScanStartDate', '-')
-            self.write_to_cache('CS_ScanEndDate', '-')
+            self.Cache.write('CS_Status', 'In Progress')
+            self.Cache.write('CS_TotalRepos', '0')
+            self.Cache.write('CS_NoOfReposScanned', '0')
+            self.Cache.write('CS_ReposNonCompliant', '0')
+            self.Cache.write('CS_NoOfSecretsFound', '0')
+            self.Cache.write('CS_PercentageCompletion', '0')
+            self.Cache.write('CS_ScanStartDate', '-')
+            self.Cache.write('CS_ScanEndDate', '-')
             repos = []
 
-            if not self.authCheck():
+            # Check bitbucket, db, jira & slack auth
+            bitbucket_status_code = BitbucketServer(self.bitbucket_host, self.bitbucket_user_name, self.bitbucket_auth_token, self.limit).auth()
+            db_status_code = DBOperations().auth()
+            jira_status_code = Jira(self.jira_host, self.jira_user_name, self.jira_auth_token, self.jira_enable).auth()
+            slack_status_code = Slack(self.slack_host, self.slack_auth_token, self.slack_enable).auth()
+            if bitbucket_status_code != 200 or db_status_code != 200 or jira_status_code != 200 or slack_status_code != 200:
                 print('ERROR - scan_engine - Authentication failure')
                 return
 
             # Set the CS status to In progress 
-            self.write_to_cache('CS_Status', 'In Progress')
+            self.Cache.write('CS_Status', 'In Progress')
 
             if not (os.path.exists(self.scanner_directory) and os.path.exists(self.scanner_results_directory)):
                 print('ERROR - scan_engine - Directory not found')
@@ -412,15 +319,15 @@ class AS2:
 
             scanStartDate = self.dt()
             # Set the CS start date 
-            self.write_to_cache('CS_ScanStartDate', scanStartDate)
+            self.Cache.write('CS_ScanStartDate', scanStartDate)
 
             #print("DEBUG - scan_engine - isLastPage={}, nextPageStart={}, repoLen={}".format(repo_isLastPage, repo_nextPageStart, str(len(repos))))
 
             # Get list of repositories 
-            repos = BitbucketServer().get_repos()
+            repos = self.BitbucketServer.get_repos()
 
             # Set the CS total repo count 
-            self.write_to_cache('CS_TotalRepos', str(len(repos)))
+            self.Cache.write('CS_TotalRepos', str(len(repos)))
 
             if not strtobool(self.scan_all_repo_branches):
                 self.scan_master_branch(repos)
@@ -430,11 +337,11 @@ class AS2:
             print('INFO - scan_engine - Scan complete')
 
             scanEndDate = self.dt()
-            self.write_to_cache('CS_NoOfSecretsFound', str(sum(self.secrets_count)))
-            self.write_to_cache('CS_ReposNonCompliant', str(len(self.no_of_secrets["repository"].keys())))      
-            self.write_to_cache('CS_ScanEndDate', scanEndDate)
-            self.write_to_cache('CS_NoOfReposScanned', str(sum(self.no_of_repos_scanned)))
-            self.write_to_cache('CS_Status', 'Completed')
+            self.Cache.write('CS_NoOfSecretsFound', str(sum(self.secrets_count)))
+            self.Cache.write('CS_ReposNonCompliant', str(len(self.no_of_secrets["repository"].keys())))      
+            self.Cache.write('CS_ScanEndDate', scanEndDate)
+            self.Cache.write('CS_NoOfReposScanned', str(sum(self.no_of_repos_scanned)))
+            self.Cache.write('CS_Status', 'Completed')
             self.update_ps_results()
 
             # Any repositories that are failed to download or scan will be printed 
@@ -442,80 +349,7 @@ class AS2:
                 print('ERROR - Failed to download or scan the following reposirories {}'.format(self.queueCheck))
             
             # Upload scan reults to JIRA EPIC ticket if the settings is set to true
-            if strtobool(self.jira_enable):
-                self.jira_notification()
+            Jira(self.jira_host, self.jira_user_name, self.jira_auth_token, self.jira_enable).send_notification(self.jira_epic_id)
             
             # Send the notification to slack if the settings is set to true
-            if strtobool(self.slack_enable):
-                self.slack_notification(self.no_of_secrets["project"])
-
-# This is a lite weight class to minimize the DB calls and varaiable processing 
-class AS2LITE:
-    def __init__(self):
-        # Redis cache to store scan status
-        self.redis = redis.Redis(host=current_app.config["REDIS_HOST"], port=current_app.config["REDIS_PORT"], db=0)
-
-    def dt(self):
-        # This function returns current date and time 
-        print('INFO - dt - Execute dt function')
-        dt = datetime.now()
-        dt = dt.strftime('%d-%b-%Y %H:%M:%S')
-        return dt
-
-    def write_to_cache(self, k, v):
-        # This function writes the key and value to the cache 
-        self.redis.set(k, v)
-
-    def read_cache(self, k):
-        # This function retrieves the value for a given key from the cache 
-        v = self.redis.get(k).decode('utf-8')
-        return v
-
-    def authCheck(self, bitbucket_host, bitbucket_auth_token, slack_enable, slack_auth_token, jira_enable, jira_host, jira_user_name, jira_auth_token):
-        # This function ensures Bitbucket, Slack & Jira connectivity and authentication before the settings are committed to the database 
-        # And also before beginning the scan process. 
-        print('INFO - authCheck - Execute authCheck function')
-        bitbucket_url = "https://{}/rest/api/1.0/projects".format(bitbucket_host)
-        bitbucket_headers = {"Authorization": "Bearer " + bitbucket_auth_token}
-        bitbucket = requests.get(bitbucket_url, headers=bitbucket_headers)
-        bitbucket_status_code = bitbucket.status_code
-
-        # The slack auth code is set to 200, if the slack_enable setting is set to false 
-        # This is to handle the auth check 
-        if strtobool(slack_enable):
-            slack_url = "https://slack.com/api/auth.test"
-            slack_headers = {"Content-Type": "application/x-www-form-urlencoded", "Authorization": "Bearer " + slack_auth_token}
-            slack = requests.post(slack_url, headers = slack_headers)
-            slack_response_text = json.loads(slack.text)
-            if slack_response_text['ok']:
-                slack_status_code = 200
-            else:
-                slack_status_code = 401
-        else:
-            slack_status_code = 200
-
-        # The jira auth code is set to 200, if the jira_enable setting is set to false 
-        # This is to handle the auth check 
-        if strtobool(jira_enable):
-            jira_url = "https://{}/rest/api/2/project".format(jira_host)
-            jira_credentials  = requests.auth.HTTPBasicAuth(jira_user_name, jira_auth_token)
-            jira=requests.get(jira_url, auth=jira_credentials)
-            jira_status_code = jira.status_code
-        else:
-            jira_status_code = 200
-
-        # Execute a db query to verify the connection 
-        from app import app
-        with app.app_context():
-            try:
-                gitLeaksDbHandler.session.query(text("1")).from_statement(text("SELECT 1")).all()
-                db_status_code = 200
-            except Exception as e:
-                print('Error dbcheck={}'.format(e))
-                db_status_code = 0
-
-        print('INFO - authCheck - Bitbucket: {}, Slack: {}, Jira: {}, DB: {}'.format(bitbucket_status_code, slack_status_code, jira_status_code, db_status_code))
-        if (bitbucket_status_code == 200 and slack_status_code == 200 and jira_status_code == 200 and db_status_code == 200):
-            return True
-        else:
-            return False
+            Slack(self.slack_host, self.slack_auth_token, self.slack_enable).send_notification(self.slack_channel, self.slack_message, self.no_of_secrets["project"])

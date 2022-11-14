@@ -1,17 +1,15 @@
 import re, ast
-from subprocess import Popen, PIPE
-from datetime import datetime
-from turtle import update
-from certifi import where
-from flask import request, jsonify
+from flask import request
 from threading import Thread
 from config import GitleaksConfig
-from urllib.parse import unquote, parse_qs
+from urllib.parse import parse_qs
 from flask import send_file
-from models.gitleaks import gitLeaksDbHandler, gitLeaksSettingsTable
-from sqlalchemy import select, update, text
-from libs.applicationSecuritySuite import AS2, AS2LITE
+from models.gitleaks import gitLeaksSettingsTable
+from libs.applicationSecuritySuite import AS2
 from libs.dbOperations import DBOperations
+from libs.notifications import Jira, Slack
+from libs.bitbucketServer import BitbucketServer
+from libs.cache import Cache
 
 def settings_data():
     # This function is to process and store the settings values to the db 
@@ -37,7 +35,12 @@ def settings_data():
         if (settingsTable['jiraEnable'].lower() == "true" and (settingsTable['jiraHost'] == '' or settingsTable['jiraEpicID'] == '' or settingsTable['jiraUserName'] == '' or settingsTable['jiraAuthToken'] == '')):
             print('INFO - Set JIRA mandatory values')
             return {"status": "error", "message": "set jira mandatory values"}
-        if not AS2LITE().authCheck(settingsTable['bitbucketHost'], settingsTable['bitbucketAuthToken'], settingsTable['slackEnable'], settingsTable['slackAuthToken'], settingsTable['jiraEnable'], settingsTable['jiraHost'], settingsTable['jiraUserName'], settingsTable['jiraAuthToken']):
+        # Check bitbucket, db, jira & slack auth
+        bitbucket_status_code = BitbucketServer(settingsTable['bitbucketHost'], settingsTable['bitbucketUserName'], settingsTable['bitbucketAuthToken'], settingsTable['bitbucketLimit']).auth()
+        db_status_code = DBOperations().auth()
+        jira_status_code = Jira(settingsTable['jiraHost'], settingsTable['jiraUserName'], settingsTable['jiraAuthToken'], settingsTable['jiraEnable']).auth()
+        slack_status_code = Slack(settingsTable['slackHost'], settingsTable['slackAuthToken'], settingsTable['slackEnable']).auth()
+        if bitbucket_status_code != 200 or db_status_code != 200 or jira_status_code != 200 or slack_status_code != 200:
             print('INFO - Authentication failure')
             return {"status": "error", "message": "Authentication failure"}
 
@@ -69,8 +72,8 @@ def scan_status():
     # This function is called by the frontend every 30 seconds  
     print('INFO - Execute scan_status function')
     stats = ['Status', 'TotalRepos', 'NoOfReposScanned', 'ReposNonCompliant', 'NoOfSecretsFound', 'PercentageCompletion', 'ScanStartDate']
-    scan_completion_percentage = str(int((int(AS2LITE().read_cache('CS_NoOfReposScanned'))/int(AS2LITE().read_cache('CS_TotalRepos')))*100)) if int(AS2LITE().read_cache('CS_TotalRepos')) != 0 else 0
-    data = [["", "Status", AS2LITE().read_cache('CS_Status')], ["", "Total Number Of Repositories", AS2LITE().read_cache('CS_TotalRepos')], ["", "Number of Repos scanned", AS2LITE().read_cache('CS_NoOfReposScanned')], ["", "Number of Repos Non compliant", AS2LITE().read_cache('CS_ReposNonCompliant')], ["", "Number of Secrets found", AS2LITE().read_cache('CS_NoOfSecretsFound')], ["", "Percentage Completion", scan_completion_percentage], ["", "Scan start date", AS2LITE().read_cache('CS_ScanStartDate')]]
+    scan_completion_percentage = str(int((int(Cache().read('CS_NoOfReposScanned'))/int(Cache().read('CS_TotalRepos')))*100)) if int(Cache().read('CS_TotalRepos')) != 0 else 0
+    data = [["", "Status", Cache().read('CS_Status')], ["", "Total Number Of Repositories", Cache().read('CS_TotalRepos')], ["", "Number of Repos scanned", Cache().read('CS_NoOfReposScanned')], ["", "Number of Repos Non compliant", Cache().read('CS_ReposNonCompliant')], ["", "Number of Secrets found", Cache().read('CS_NoOfSecretsFound')], ["", "Percentage Completion", scan_completion_percentage], ["", "Scan start date", Cache().read('CS_ScanStartDate')]]
     return {"data": data}
 
 def previous_scan_status():
@@ -78,6 +81,6 @@ def previous_scan_status():
     # Home page status 
     print('INFO - Execute previous_scan_status function')
     stats = ['TotalRepos', 'ReposCompliant', 'ReposNonCompliant', 'NoOfSecretsFound', 'ScanStartDate', 'ScanEndDate']
-    compliance_percentage = int((int(AS2LITE().read_cache('PS_ReposCompliant'))/int(AS2LITE().read_cache('PS_TotalRepos'))*100)) if int(AS2LITE().read_cache('PS_TotalRepos')) != 0 else 0
-    data = [["", "Total Number Of Repositories", AS2LITE().read_cache('PS_TotalRepos')], ["", "Number of Repos compliant", AS2LITE().read_cache('PS_ReposCompliant')], ["", "Number of Repos Non compliant", AS2LITE().read_cache('PS_ReposNonCompliant')], ["", "Number of Secrets found", AS2LITE().read_cache('PS_NoOfSecretsFound')], ["", "Compliance Percentage", compliance_percentage], ["", "Scan start date", AS2LITE().read_cache('PS_ScanStartDate')], ["", "Scan end date", AS2LITE().read_cache('PS_ScanEndDate')]]
+    compliance_percentage = int((int(Cache().read('PS_ReposCompliant'))/int(Cache().read('PS_TotalRepos'))*100)) if int(Cache().read('PS_TotalRepos')) != 0 else 0
+    data = [["", "Total Number Of Repositories", Cache().read('PS_TotalRepos')], ["", "Number of Repos compliant", Cache().read('PS_ReposCompliant')], ["", "Number of Repos Non compliant", Cache().read('PS_ReposNonCompliant')], ["", "Number of Secrets found", Cache().read('PS_NoOfSecretsFound')], ["", "Compliance Percentage", compliance_percentage], ["", "Scan start date", Cache().read('PS_ScanStartDate')], ["", "Scan end date", Cache().read('PS_ScanEndDate')]]
     return {"data": data}

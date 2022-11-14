@@ -1,12 +1,8 @@
 import re, sys, requests
 from datetime import datetime
-from models.gitleaks import gitLeaksDbHandler, gitLeaksEventsTable, gitLeaksSettingsTable
-from sqlalchemy import select, update, text
 
 class BitbucketServer():
-    def __init__(self):
-        # Set values from GL settings table 
-        self.settingsTable = self.dbSelectOneRecord(gitLeaksSettingsTable.__tablename__, 'id=1')
+    def __init__(self, host_name, user_name, auth_token, limit):
         # Bitbucket server get_repos variables 
         self.nextPageStart = 0 # get_repos pagination
         self.isLastPage = False # get_repos pagination
@@ -17,11 +13,11 @@ class BitbucketServer():
         self.end_process = False 
         # Set values from GL settings table 
         try:
-            self.bitbucket_host = self.settingsTable['bitbucketHost']
+            self.bitbucket_host = host_name
             self.bitbucket_base_url = "https://{}/rest/api/1.0/".format(self.bitbucket_host)
-            self.limit = "?limit={}".format(self.settingsTable['bitbucketLimit'])
-            self.bitbucket_auth_token = self.settingsTable['bitbucketAuthToken']
-            self.bitbucket_user_name = self.settingsTable['bitbucketUserName']
+            self.limit = "?limit={}".format(limit)
+            self.bitbucket_auth_token = auth_token
+            self.bitbucket_user_name = user_name
         except:
             print('ERROR - BitbucketServer_init - Failed to connect with the database')
             sys.exit()
@@ -32,16 +28,12 @@ class BitbucketServer():
         # Commit details
         self.latest_commit_details = {}
 
-    def dbSelectOneRecord(self, tableName, condition):
-        # This function returns a record that contains all columns from a table 
-        print('INFO - BitbucketServer - Execute dbSelectOneRecord function')
-        select_sql = text('select * from {} where {}'.format(tableName, condition))
-        from app import app
-        with app.app_context():
-            tableData = gitLeaksDbHandler.session.execute(select_sql)
-        for t in tableData:
-            data = dict(t)
-        return data
+    def auth(self):
+        print('INFO - BitbucketServer - Execute authCheck function')
+        bitbucket_url = "https://{}/rest/api/1.0/projects".format(self.bitbucket_host)
+        bitbucket_headers = {"Authorization": "Bearer " + self.bitbucket_auth_token}
+        bitbucket_output = requests.get(bitbucket_url, headers=bitbucket_headers)
+        return bitbucket_output.status_code
 
     def get_repos(self):
         # This function returns a complete repository list 

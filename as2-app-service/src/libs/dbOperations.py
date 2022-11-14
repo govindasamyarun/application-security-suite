@@ -1,6 +1,5 @@
-import os
-from sqlalchemy import select, update, text
-from models.gitleaks import gitLeaksDbHandler, gitLeaksEventsTable, gitLeaksSettingsTable
+from sqlalchemy import text
+from models.gitleaks import gitLeaksDbHandler
 
 class DBOperations():
     def __init__(self):
