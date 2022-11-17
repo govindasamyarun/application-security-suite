@@ -4,7 +4,7 @@ from threading import Thread
 from config import GitleaksConfig
 from urllib.parse import parse_qs
 from flask import send_file
-from models.gitleaks import gitLeaksSettingsTable
+from models.as2 import SettingsTable
 from libs.applicationSecuritySuite import AS2
 from libs.dbOperations import DBOperations
 from libs.notifications import Jira, Slack
@@ -14,7 +14,7 @@ from libs.cache import Cache
 def settings_data():
     # This function is to process and store the settings values to the db 
     print('INFO - Execute settings_data function')
-    settingsTable = DBOperations().selectOneRecord(gitLeaksSettingsTable.__tablename__, 'id=1')
+    settingsTable = DBOperations().selectOneRecord(SettingsTable.__tablename__, 'id=1')
     if request.method == 'POST':
         print('INFO - settings_data POST method')
         data = dict(ast.literal_eval(str(parse_qs(request.get_data().decode("utf-8")))))
@@ -45,11 +45,11 @@ def settings_data():
             return {"status": "error", "message": "Authentication failure"}
 
         values = {'data': '''"bitbucketHost" = '{}', "bitbucketUserName" = '{}', "bitbucketAuthToken" = '{}', "scannerScanAllBranches" = '{}', "slackEnable" = '{}', "slackHost" = '{}', "slackAuthToken" = '{}', "slackChannel" = '{}', "slackMessage" = '{}', "jiraEnable" = '{}', "jiraHost" = '{}', "jiraEpicID" = '{}', "jiraUserName" = '{}', "jiraAuthToken" = '{}\''''.format(settingsTable['bitbucketHost'], settingsTable['bitbucketUserName'], settingsTable['bitbucketAuthToken'], settingsTable['scannerScanAllBranches'], settingsTable['slackEnable'], settingsTable['slackHost'], settingsTable['slackAuthToken'], settingsTable['slackChannel'], settingsTable['slackMessage'], settingsTable['jiraEnable'], settingsTable['jiraHost'], settingsTable['jiraEpicID'], settingsTable['jiraUserName'], settingsTable['jiraAuthToken'])}
-        updateSettingsData = DBOperations().updateRecord(gitLeaksSettingsTable.__tablename__, 'id=1', values)
+        updateSettingsData = DBOperations().updateRecord(SettingsTable.__tablename__, 'id=1', values)
         return updateSettingsData
     else:
         print('INFO - settings_data GET method')
-        settingsTable = DBOperations().selectOneRecord(gitLeaksSettingsTable.__tablename__, 'id=1')
+        settingsTable = DBOperations().selectOneRecord(SettingsTable.__tablename__, 'id=1')
         # Sensitive fields will be masked except the last 4 digits 
         data = {"bitbucket_host_name": settingsTable['bitbucketHost'], "bitbucket_user_name": settingsTable['bitbucketUserName'], "bitbucket_auth_token": re.sub(r'\S', 'X', settingsTable['bitbucketAuthToken'][:-4])+settingsTable['bitbucketAuthToken'][-4:], "scan_all_branches": settingsTable['scannerScanAllBranches'], "enable_slack_notifications": settingsTable['slackEnable'], "slack_host_name": settingsTable['slackHost'], "slack_auth_token": re.sub(r'\S', 'X', settingsTable['slackAuthToken'][:-4])+settingsTable['slackAuthToken'][-4:], "slack_channel_id": settingsTable['slackChannel'], "slack_message": settingsTable['slackMessage'], "enable_jira_notifications": settingsTable['jiraEnable'], "jira_host_name": settingsTable['jiraHost'], "jira_epic_id": settingsTable['jiraEpicID'], "jira_user_name": settingsTable['jiraUserName'], "jira_auth_token": re.sub(r'\S', 'X', settingsTable['jiraAuthToken'][:-4])+settingsTable['jiraAuthToken'][-4:]}
         return data

@@ -4,7 +4,8 @@ from datetime import datetime
 from distutils.util import strtobool
 from datetime import datetime
 from config import GitleaksConfig
-from models.gitleaks import gitLeaksDbHandler, gitLeaksEventsTable, gitLeaksSettingsTable
+from models.as2 import as2DbHandler, ComplianceTable, SettingsTable
+from models.gitleaks import gitleaksDbHandler, gitleaksScanResultsTable
 from libs.downloadRepository import DownloadRepository
 from libs.gitleaks import Gitleaks
 from libs.bitbucketServer import BitbucketServer
@@ -15,7 +16,7 @@ from libs.cache import Cache
 class AS2:
     def __init__(self):
         # Set values from GL settings table 
-        self.settingsTable = DBOperations().selectOneRecord(gitLeaksSettingsTable.__tablename__, 'id=1')
+        self.settingsTable = DBOperations().selectOneRecord(SettingsTable.__tablename__, 'id=1')
         # Report file path 
         self.scanner_results_config_file_path = GitleaksConfig.scanner_results_config_file_path
         # Variables used for scan status 
@@ -97,9 +98,9 @@ class AS2:
         from app import app
         with app.app_context():
             compliance_percentage = int((int(self.Cache.read('PS_ReposCompliant'))/int(self.Cache.read('PS_TotalRepos'))*100)) if int(self.Cache.read('PS_TotalRepos')) != 0 else 0
-            add_record = gitLeaksEventsTable(totalrepos=self.Cache.read('PS_TotalRepos'), reposcompliant=self.Cache.read('PS_ReposCompliant'), reposnoncompliant=self.Cache.read('PS_ReposNonCompliant'), noofsecretsfound=self.Cache.read('PS_NoOfSecretsFound'), compliancepercentage=compliance_percentage, scanstartdate=self.Cache.read('PS_ScanStartDate'), scanenddate=self.Cache.read('PS_ScanEndDate'))
-            gitLeaksDbHandler.session.add(add_record)
-            gitLeaksDbHandler.session.commit()
+            add_record = ComplianceTable(totalrepos=self.Cache.read('PS_TotalRepos'), reposcompliant=self.Cache.read('PS_ReposCompliant'), reposnoncompliant=self.Cache.read('PS_ReposNonCompliant'), noofsecretsfound=self.Cache.read('PS_NoOfSecretsFound'), compliancepercentage=compliance_percentage, scanstartdate=self.Cache.read('PS_ScanStartDate'), scanenddate=self.Cache.read('PS_ScanEndDate'))
+            as2DbHandler.session.add(add_record)
+            as2DbHandler.session.commit()
 
     def process_scanner_output(self, project, repository, slug, ssh, branch, scanner_results):
         # This function process the Gitleaks output 
@@ -123,10 +124,20 @@ class AS2:
                 for j in range(len(scanner_results["values"])):
                     scanner_results_dict = {"eventtime": datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3], "project": project, "repository": repository, "slug": slug, "ssh": ssh, "branch": branch, "noOfSecrets": scanner_results["length"], "StartLine": scanner_results["values"][j]["StartLine"], "EndLine": scanner_results["values"][j]["EndLine"], "StartColumn": scanner_results["values"][j]["StartColumn"], "EndColumn": scanner_results["values"][j]["EndColumn"], "File": scanner_results["values"][j]["File"], "Author": scanner_results["values"][j]["Author"], "Email": scanner_results["values"][j]["Email"], "Date": scanner_results["values"][j]["Date"], "Message": scanner_results["values"][j]["Message"][:25], "Committer Timestamp": self.latest_commit_details[committer_key]['committer_timestamp'], "Committer Name": self.latest_commit_details[committer_key]['committer_name'], "Committer email": self.latest_commit_details[committer_key]['committer_email'], "Committer Message": self.latest_commit_details[committer_key]['committer_message']}
                     w.writerow(scanner_results_dict.values())
-                    #print("DEBUG - date={}, project={}, repository={}, slug={}, ssh={}, branch={}, noOfSecrets={}, StartLine={}, EndLine={}, StartColumn={}, EndColumn={}, File={}, Author={}, Email={}, Date={}, Message={}".format(datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3], project, repository, slug, ssh, branch, scan_results["length"], scan_results["values"][j]["StartLine"], scan_results["values"][j]["EndLine"], scan_results["values"][j]["StartColumn"], scan_results["values"][j]["EndColumn"], scan_results["values"][j]["File"], scan_results["values"][j]["Author"], scan_results["values"][j]["Email"], scan_results["values"][j]["Date"], scan_results["values"][j]["Message"][:25]))            
+                    #print("DEBUG - date={}, project={}, repository={}, slug={}, ssh={}, branch={}, noOfSecrets={}, StartLine={}, EndLine={}, StartColumn={}, EndColumn={}, File={}, Author={}, Email={}, Date={}, Message={}".format(datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3], project, repository, slug, ssh, branch, scan_results["length"], scan_results["values"][j]["StartLine"], scan_results["values"][j]["EndLine"], scan_results["values"][j]["StartColumn"], scan_results["values"][j]["EndColumn"], scan_results["values"][j]["File"], scan_results["values"][j]["Author"], scan_results["values"][j]["Email"], scan_results["values"][j]["Date"], scan_results["values"][j]["Message"][:25]))
+                    # Add to ScanResultsTable
+                    # project, repository, secretscount, lastcommitdate, lastcommitname, lastcommitemail, eventtime
+                    #insert_data = (project, repository, scanner_results["length"], self.latest_commit_details[committer_key]['committer_timestamp'], self.latest_commit_details[committer_key]['committer_name'], self.latest_commit_details[committer_key]['committer_email'], datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3])
+                    insert_data = (project, repository, scanner_results["length"], datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3])
+                    DBOperations().gitleaksUpsertRecord(gitleaksDbHandler, gitleaksScanResultsTable.__tablename__, insert_data)
             else:
                 scanner_results_dict = {"eventtime": datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3], "project": project, "repository": repository, "slug": slug, "ssh": ssh, "branch": branch, "noOfSecrets": "0", "StartLine": "", "EndLine": "", "StartColumn": "", "EndColumn": "", "File": "", "Author": "", "Email": "", "Date": "", "Message": "", "Committer Timestamp": self.latest_commit_details[committer_key]['committer_timestamp'], "Committer Name": self.latest_commit_details[committer_key]['committer_name'], "Committer email": self.latest_commit_details[committer_key]['committer_email'], "Committer Message": self.latest_commit_details[committer_key]['committer_message']}
                 w.writerow(scanner_results_dict.values())
+                # Add to ScanResultsTable
+                # project, repository, secretscount, lastcommitdate, lastcommitname, lastcommitemail, eventtime
+                #insert_data = (project, repository, '0', self.latest_commit_details[committer_key]['committer_timestamp'], self.latest_commit_details[committer_key]['committer_name'], self.latest_commit_details[committer_key]['committer_email'], datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3])
+                insert_data = (project, repository, '0', datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3])
+                DBOperations().gitleaksUpsertRecord(gitleaksDbHandler, gitleaksScanResultsTable.__tablename__, insert_data)
 
         # Update number of secrets 
         self.Cache.write('CS_NoOfSecretsFound', str(sum(self.secrets_count)))
@@ -188,7 +199,7 @@ class AS2:
 
             # assign a jobs to worker Queue
             if repos:
-                for i in range(len(repos[:30])):
+                for i in range(len(repos)):
                     work.put(repos[i])
             
             # append the worker Queue jobs to thread
@@ -256,7 +267,7 @@ class AS2:
 
             # assign a jobs to worker Queue
             if repos:
-                for i in range(len(repos[:30])):
+                for i in range(len(repos)):
                     work.put(repos[i])
             
             # append the worker Queue jobs to thread
@@ -295,7 +306,7 @@ class AS2:
             self.Cache.write('CS_ScanEndDate', '-')
             repos = []
 
-            # Check bitbucket, db, jira & slack auth
+            # Check bitbucket, db, jira & slack auth 
             bitbucket_status_code = BitbucketServer(self.bitbucket_host, self.bitbucket_user_name, self.bitbucket_auth_token, self.limit).auth()
             db_status_code = DBOperations().auth()
             jira_status_code = Jira(self.jira_host, self.jira_user_name, self.jira_auth_token, self.jira_enable).auth()

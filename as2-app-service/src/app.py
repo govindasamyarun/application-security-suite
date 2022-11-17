@@ -3,7 +3,8 @@ from flask import Flask
 from flask_migrate import Migrate
 from routes.apiRoute import apiRoute
 from routes.webRoute import webRoute
-from models.gitleaks import gitLeaksDbHandler, gitLeaksSettingsTable
+from models.as2 import as2DbHandler, SettingsTable
+from models.gitleaks import gitleaksDbHandler, gitleaksScanResultsTable
 from libs.cache import Cache
 
 app = Flask(__name__)
@@ -16,13 +17,18 @@ app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['REDIS_HOST'] = os.environ['REDIS_HOST']
 app.config['REDIS_PORT'] = os.environ['REDIS_PORT']
 
+# AS2 DB handler 
+as2DbHandler.init_app(app)
+migrate = Migrate(app, as2DbHandler)
+
 # Gitleaks DB handler 
-gitLeaksDbHandler.init_app(app)
-migrate = Migrate(app, gitLeaksDbHandler)
+gitleaksDbHandler.init_app(app)
+migrate = Migrate(app, gitleaksDbHandler)
 
 with app.app_context():
     # Creates tables if not exists 
-    gitLeaksDbHandler.create_all()
+    as2DbHandler.create_all()
+    gitleaksDbHandler.create_all()
     # Sets the cache to default during application startup process 
     # CS - Current scan results
     # PS - Previous scan results
@@ -43,10 +49,10 @@ with app.app_context():
     Cache().write('PS_ScanEndDate', '-')
 
     # Sets default values to the DB during application startup 
-    if not gitLeaksDbHandler.session.query(gitLeaksSettingsTable).all():
-        add_record = gitLeaksSettingsTable(gitleaksPath='/usr/src/app/gitleaks/gitleaks', bitbucketLimit=100, scannerScanAllBranches='false', scannerPathToDownloadRepository='/usr/src/app/downloads/', scannerResultsDirectory='/usr/src/app/', slackEnable='false', jiraEnable='false')
-        gitLeaksDbHandler.session.add(add_record)
-        gitLeaksDbHandler.session.commit()
+    if not as2DbHandler.session.query(SettingsTable).all():
+        add_record = SettingsTable(gitleaksPath='/usr/src/app/gitleaks/gitleaks', bitbucketLimit=100, scannerScanAllBranches='false', scannerPathToDownloadRepository='/usr/src/app/downloads/', scannerResultsDirectory='/usr/src/app/', slackEnable='false', jiraEnable='false')
+        as2DbHandler.session.add(add_record)
+        as2DbHandler.session.commit()
 
 # Routes to the html files
 app.register_blueprint(webRoute, url_prefix='/web')
