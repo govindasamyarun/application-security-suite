@@ -41,7 +41,7 @@ def settings_data():
         jira_status_code = Jira(settingsTable['jiraHost'], settingsTable['jiraUserName'], settingsTable['jiraAuthToken'], settingsTable['jiraEnable']).auth()
         slack_status_code = Slack(settingsTable['slackHost'], settingsTable['slackAuthToken'], settingsTable['slackEnable']).auth()
         if bitbucket_status_code != 200 or db_status_code != 200 or jira_status_code != 200 or slack_status_code != 200:
-            print('INFO - Authentication failure')
+            print('INFO - Authentication failure Bitbucket: {}, DB: {}, JIRA: {}, Slack: {}'.format(bitbucket_status_code, db_status_code, jira_status_code, slack_status_code))
             return {"status": "error", "message": "Authentication failure"}
 
         values = {'data': '''"bitbucketHost" = '{}', "bitbucketUserName" = '{}', "bitbucketAuthToken" = '{}', "scannerScanAllBranches" = '{}', "slackEnable" = '{}', "slackHost" = '{}', "slackAuthToken" = '{}', "slackChannel" = '{}', "slackMessage" = '{}', "jiraEnable" = '{}', "jiraHost" = '{}', "jiraEpicID" = '{}', "jiraUserName" = '{}', "jiraAuthToken" = '{}\''''.format(settingsTable['bitbucketHost'], settingsTable['bitbucketUserName'], settingsTable['bitbucketAuthToken'], settingsTable['scannerScanAllBranches'], settingsTable['slackEnable'], settingsTable['slackHost'], settingsTable['slackAuthToken'], settingsTable['slackChannel'], settingsTable['slackMessage'], settingsTable['jiraEnable'], settingsTable['jiraHost'], settingsTable['jiraEpicID'], settingsTable['jiraUserName'], settingsTable['jiraAuthToken'])}
@@ -84,3 +84,18 @@ def previous_scan_status():
     compliance_percentage = int((int(Cache().read('PS_ReposCompliant'))/int(Cache().read('PS_TotalRepos'))*100)) if int(Cache().read('PS_TotalRepos')) != 0 else 0
     data = [["", "Total Number Of Repositories", Cache().read('PS_TotalRepos')], ["", "Number of Repos compliant", Cache().read('PS_ReposCompliant')], ["", "Number of Repos Non compliant", Cache().read('PS_ReposNonCompliant')], ["", "Number of Secrets found", Cache().read('PS_NoOfSecretsFound')], ["", "Compliance Percentage", compliance_percentage], ["", "Scan start date", Cache().read('PS_ScanStartDate')], ["", "Scan end date", Cache().read('PS_ScanEndDate')]]
     return {"data": data}
+
+def analysis_view():
+    # This fucntion returns data from Gitleaks and BitbucketServer tables 
+    print('INFO - Execute as2_analysis_view function')
+    data = DBOperations().analysisView()
+    return {"data": data}
+
+def analysis_view_record():
+    # This fucntion returns data from Gitleaks and BitbucketServer tables 
+    print('INFO - Execute analysis_view_record function')
+    q = ast.literal_eval(request.args.get('q'))
+    project = q[1]
+    repository = q[2]
+    data = DBOperations().analysisViewRecord(project, repository)
+    return data

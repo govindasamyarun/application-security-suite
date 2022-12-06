@@ -5,6 +5,7 @@ from routes.apiRoute import apiRoute
 from routes.webRoute import webRoute
 from models.as2 import as2DbHandler, SettingsTable
 from models.gitleaks import gitleaksDbHandler, gitleaksScanResultsTable
+from models.bitbucketServer import bitbucketServerDbHandler, bitbucketServerScanResultsTable
 from libs.cache import Cache
 
 app = Flask(__name__)
@@ -25,10 +26,15 @@ migrate = Migrate(app, as2DbHandler)
 gitleaksDbHandler.init_app(app)
 migrate = Migrate(app, gitleaksDbHandler)
 
+# BitbucketServer DB handler 
+bitbucketServerDbHandler.init_app(app)
+migrate = Migrate(app, bitbucketServerDbHandler)
+
 with app.app_context():
     # Creates tables if not exists 
     as2DbHandler.create_all()
     gitleaksDbHandler.create_all()
+    bitbucketServerDbHandler.create_all()
     # Sets the cache to default during application startup process 
     # CS - Current scan results
     # PS - Previous scan results

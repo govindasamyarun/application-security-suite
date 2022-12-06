@@ -7,6 +7,9 @@ def home():
 def scan():
     return render_template('scan.html')
 
+def analysis():
+    return render_template('analysis.html')
+
 def reports():
     return render_template('reports.html')
 

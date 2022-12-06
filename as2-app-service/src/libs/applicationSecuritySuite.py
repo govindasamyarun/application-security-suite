@@ -6,6 +6,7 @@ from datetime import datetime
 from config import GitleaksConfig
 from models.as2 import as2DbHandler, ComplianceTable, SettingsTable
 from models.gitleaks import gitleaksDbHandler, gitleaksScanResultsTable
+from models.bitbucketServer import bitbucketServerDbHandler, bitbucketServerScanResultsTable
 from libs.downloadRepository import DownloadRepository
 from libs.gitleaks import Gitleaks
 from libs.bitbucketServer import BitbucketServer
@@ -115,29 +116,25 @@ class AS2:
             self.no_of_secrets["project"][project] = scanner_results["length"]
         self.secrets_count.append(scanner_results["length"])
 
+        # Add to ScanResultsTable
+        # project, repository, secretscount, lastcommitdate, lastcommitname, lastcommitemail, eventtime
+        #insert_data = (project, repository, scanner_results["length"], self.latest_commit_details[committer_key]['committer_timestamp'], self.latest_commit_details[committer_key]['committer_name'], self.latest_commit_details[committer_key]['committer_email'], datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3])
+        gitleaks_upsert_data = (project, repository, scanner_results["length"], datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3])
+        DBOperations().gitleaksUpsertRecord(gitleaksDbHandler, gitleaksScanResultsTable.__tablename__, gitleaks_upsert_data)
+
         # Write the scan results 
         with open(self.scanner_results_directory+'scanner_results.csv', 'a') as f:
             w = csv.writer(f)
-            committer_key = self.formatKeys(project+'-'+repository)      
+            committer_key = self.formatKeys(project+'-'+repository)
             if int(scanner_results["length"]) != 0:
                 self.no_of_secrets["repository"][repository] = scanner_results["length"]
                 for j in range(len(scanner_results["values"])):
                     scanner_results_dict = {"eventtime": datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3], "project": project, "repository": repository, "slug": slug, "ssh": ssh, "branch": branch, "noOfSecrets": scanner_results["length"], "StartLine": scanner_results["values"][j]["StartLine"], "EndLine": scanner_results["values"][j]["EndLine"], "StartColumn": scanner_results["values"][j]["StartColumn"], "EndColumn": scanner_results["values"][j]["EndColumn"], "File": scanner_results["values"][j]["File"], "Author": scanner_results["values"][j]["Author"], "Email": scanner_results["values"][j]["Email"], "Date": scanner_results["values"][j]["Date"], "Message": scanner_results["values"][j]["Message"][:25], "Committer Timestamp": self.latest_commit_details[committer_key]['committer_timestamp'], "Committer Name": self.latest_commit_details[committer_key]['committer_name'], "Committer email": self.latest_commit_details[committer_key]['committer_email'], "Committer Message": self.latest_commit_details[committer_key]['committer_message']}
                     w.writerow(scanner_results_dict.values())
                     #print("DEBUG - date={}, project={}, repository={}, slug={}, ssh={}, branch={}, noOfSecrets={}, StartLine={}, EndLine={}, StartColumn={}, EndColumn={}, File={}, Author={}, Email={}, Date={}, Message={}".format(datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3], project, repository, slug, ssh, branch, scan_results["length"], scan_results["values"][j]["StartLine"], scan_results["values"][j]["EndLine"], scan_results["values"][j]["StartColumn"], scan_results["values"][j]["EndColumn"], scan_results["values"][j]["File"], scan_results["values"][j]["Author"], scan_results["values"][j]["Email"], scan_results["values"][j]["Date"], scan_results["values"][j]["Message"][:25]))
-                    # Add to ScanResultsTable
-                    # project, repository, secretscount, lastcommitdate, lastcommitname, lastcommitemail, eventtime
-                    #insert_data = (project, repository, scanner_results["length"], self.latest_commit_details[committer_key]['committer_timestamp'], self.latest_commit_details[committer_key]['committer_name'], self.latest_commit_details[committer_key]['committer_email'], datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3])
-                    insert_data = (project, repository, scanner_results["length"], datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3])
-                    DBOperations().gitleaksUpsertRecord(gitleaksDbHandler, gitleaksScanResultsTable.__tablename__, insert_data)
             else:
                 scanner_results_dict = {"eventtime": datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3], "project": project, "repository": repository, "slug": slug, "ssh": ssh, "branch": branch, "noOfSecrets": "0", "StartLine": "", "EndLine": "", "StartColumn": "", "EndColumn": "", "File": "", "Author": "", "Email": "", "Date": "", "Message": "", "Committer Timestamp": self.latest_commit_details[committer_key]['committer_timestamp'], "Committer Name": self.latest_commit_details[committer_key]['committer_name'], "Committer email": self.latest_commit_details[committer_key]['committer_email'], "Committer Message": self.latest_commit_details[committer_key]['committer_message']}
                 w.writerow(scanner_results_dict.values())
-                # Add to ScanResultsTable
-                # project, repository, secretscount, lastcommitdate, lastcommitname, lastcommitemail, eventtime
-                #insert_data = (project, repository, '0', self.latest_commit_details[committer_key]['committer_timestamp'], self.latest_commit_details[committer_key]['committer_name'], self.latest_commit_details[committer_key]['committer_email'], datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3])
-                insert_data = (project, repository, '0', datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3])
-                DBOperations().gitleaksUpsertRecord(gitleaksDbHandler, gitleaksScanResultsTable.__tablename__, insert_data)
 
         # Update number of secrets 
         self.Cache.write('CS_NoOfSecretsFound', str(sum(self.secrets_count)))
@@ -173,9 +170,6 @@ class AS2:
                     jobs = work.get(True, 5)
                     print('INFO - scan_master_branch - Added to Queue : {}'.format(self.formatKeys(jobs["project"]["name"]+'-'+jobs['name']+'-'+branch)))
                     self.queueCheck[self.formatKeys(jobs["project"]["name"]+'-'+jobs['name']+'-'+branch)] = True
-                    # Get last commit details 
-                    #self.get_latest_commit_details(jobs["project"]["name"], jobs["name"])
-                    self.latest_commit_details[self.formatKeys(jobs["project"]["name"]+'-'+jobs["name"])] = self.BitbucketServer.get_latest_commit_details(jobs["project"]["name"], jobs["name"])
                     
                     try:
                         for j in range(len(jobs["links"]["clone"])):
@@ -231,9 +225,6 @@ class AS2:
                 while not self.end_process:
                     print('INFO - scan_all_branches - QueueSize: {}, ThreadCount: {}'.format(work.qsize(), threading.active_count()))
                     jobs = work.get(True, 5)
-                    # Get last commit details 
-                    #self.get_latest_commit_details(jobs["project"]["name"], jobs["name"])
-                    self.latest_commit_details[self.formatKeys(jobs["project"]["name"]+'-'+jobs["name"])] = self.BitbucketServer.get_latest_commit_details(jobs["project"]["name"], jobs["name"])
 
                     try:
                         for j in range(len(jobs["links"]["clone"])):
@@ -312,7 +303,7 @@ class AS2:
             jira_status_code = Jira(self.jira_host, self.jira_user_name, self.jira_auth_token, self.jira_enable).auth()
             slack_status_code = Slack(self.slack_host, self.slack_auth_token, self.slack_enable).auth()
             if bitbucket_status_code != 200 or db_status_code != 200 or jira_status_code != 200 or slack_status_code != 200:
-                print('ERROR - scan_engine - Authentication failure')
+                print('ERROR - scan_engine - Authentication failure Bitbucket: {}, DB: {}, JIRA: {}, Slack: {}'.format(bitbucket_status_code, db_status_code, jira_status_code, slack_status_code))
                 return
 
             # Set the CS status to In progress 
@@ -339,6 +330,16 @@ class AS2:
 
             # Set the CS total repo count 
             self.Cache.write('CS_TotalRepos', str(len(repos)))
+
+            # Debug
+            #repos = repos[:10] # Debug repo 
+
+            # Get last commit details 
+            for repo in repos:
+                committer_key = self.formatKeys(repo["project"]["name"]+'-'+repo["name"])
+                self.latest_commit_details[committer_key] = self.BitbucketServer.get_latest_commit_details(repo["project"]["name"], repo["name"])
+                bitbucketserver_upsert_data = (repo["project"]["name"], repo["name"], self.latest_commit_details[committer_key]['committer_timestamp'], self.latest_commit_details[committer_key]['committer_name'], self.latest_commit_details[committer_key]['committer_email'], datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3])
+                DBOperations().bitbucketServerUpsertRecord(bitbucketServerDbHandler, bitbucketServerScanResultsTable.__tablename__, bitbucketserver_upsert_data)
 
             if not strtobool(self.scan_all_repo_branches):
                 self.scan_master_branch(repos)

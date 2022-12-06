@@ -82,6 +82,7 @@ class BitbucketServer():
         try:
             commit_url = 'projects/{}/repos/{}/commits?limit=1'.format(project, repo)
             commit_output = requests.get(self.bitbucket_base_url + commit_url, headers = self.bitbucket_headers)
+            commit_status_code = commit_output.status_code
             commit_output = commit_output.json()
             #self.latest_commit_details[self.formatKeys(project+'-'+repo)] = {'committer_name': commit_output['values'][0]['committer']['name'], 'committer_email': commit_output['values'][0]['committer']['emailAddress'], 'committer_message': commit_output['values'][0]['message'], 'committer_timestamp': committer_timestamp}
             committer_name = commit_output['values'][0]['committer']['name']
@@ -89,13 +90,15 @@ class BitbucketServer():
             committer_message = commit_output['values'][0]['message']
             committer_timestamp = datetime.fromtimestamp(commit_output['values'][0]['committerTimestamp'] / 1000)
             committer_timestamp = datetime.strftime(committer_timestamp, '%d-%b-%Y %H:%M:%S')
+            print('DEBUG - get_latest_commit_details - project: {}, repo: {}, output: {}'.format(project, repo, '200'))
         except Exception as e:
-            print('ERROR - get_latest_commit_details - Error: {}'.format(e))
+            print('ERROR - get_latest_commit_details - project: {}, repo: {}, error: {}'.format(project, repo, e))
             committer_name = 'error'
             committer_email = 'error'
             committer_message = 'error'
-            committer_timestamp = 'error'
+            committer_timestamp = ''
         return {'committer_name': committer_name, 'committer_email': committer_email, 'committer_message': committer_message, 'committer_timestamp': committer_timestamp}
+
 
     def formatKeys(self, k):
         # This function is to remove the special characters except '-'

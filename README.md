@@ -28,7 +28,7 @@ AS{2} leverages Gitleaks, an open-source tool, to identify hard-coded secrets fr
 
 - [x] Bitbucket server integration
 - [x] Hardoded-secrets integration
-- [ ] Analysis view
+- [x] Analysis view
 - [ ] Bitbucket cloud integration
 - [ ] GitHub integration
 - [ ] SAST integration
