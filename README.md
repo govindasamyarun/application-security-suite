@@ -144,3 +144,6 @@ Note: I’m a self-taught programmer. The frontend code was copied from online, 
 ## Demo
 
 https://user-images.githubusercontent.com/69586504/199733400-9209cc3a-a505-4ad4-ac36-e5132dc8e82c.mp4
+
+<img width="1727" alt="Screenshot 2022-12-06 at 6 54 48 PM" src="https://user-images.githubusercontent.com/69586504/205933543-3cd9fe21-99d4-41a9-88b8-86131999caae.png">
+
