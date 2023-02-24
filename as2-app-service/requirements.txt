@@ -4,6 +4,6 @@ requests
 configparser
 schedule
 psycopg2
-Flask-SQLAlchemy
+Flask-SQLAlchemy==3.0.2
 Flask-Migrate
 redis
